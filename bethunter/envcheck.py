@@ -2,7 +2,7 @@
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
-from . import commercial, db, net, sources, visual
+from . import commercial, db, net, sources, tiktok_local, visual
 
 OK, ERRO, BLOQ = "OK", "ERRO", "BLOQUEADO"
 
@@ -21,7 +21,12 @@ def static_status():
         c_est, c_det = commercial.static_state()
     except Exception:                     # noqa: banco indisponível não pode derrubar o diagnóstico
         c_est, c_det = "ERRO", "não foi possível ler as configurações"
+    try:
+        loc = tiktok_local.check(timeout=2)
+    except Exception:                     # noqa: nunca fatal
+        loc = {"estado": "ERRO", "detalhe": "falha ao consultar o serviço local"}
     return {
+        "TIKTOK SEARCH LOCAL": loc,
         "TIKTOK COMMERCIAL API": {"estado": c_est, "detalhe": c_det},
         "YT-DLP": {"estado": "INSTALADO" if yt else "NÃO INSTALADO", "detalhe": "coleta complementar de vídeos ativa" if yt else "opcional: pip install yt-dlp"},
         "ANTHROPIC": {"estado": "CONFIGURADO" if visual.api_key() else "NÃO CONFIGURADO",
@@ -72,9 +77,10 @@ def test_all():
     old = net.CFG["max_retries"]
     net.CFG["max_retries"] = 0
     try:
-        with ThreadPoolExecutor(4) as ex:
+        with ThreadPoolExecutor(6) as ex:
             f = {"INTERNET": ex.submit(_internet), "DUCKDUCKGO": ex.submit(_ddg), "BING": ex.submit(_bing),
-                 "TIKTOK": ex.submit(_tiktok), "TIKTOK COMMERCIAL API": ex.submit(commercial.check)}
+                 "TIKTOK": ex.submit(_tiktok), "TIKTOK COMMERCIAL API": ex.submit(commercial.check),
+                 "TIKTOK SEARCH LOCAL": ex.submit(tiktok_local.check)}
             net_res = {}
             for k, fu in f.items():
                 try:

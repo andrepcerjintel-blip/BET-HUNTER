@@ -5,7 +5,7 @@ import time
 from collections import deque
 from datetime import datetime, timedelta
 
-from . import commercial, db, extract, pipeline, queries, sources, urltools, visual
+from . import commercial, db, extract, pipeline, queries, sources, tiktok_local, urltools, visual
 from .db import jl
 from .util import base_domain, find_terms, norm, now_iso
 
@@ -104,17 +104,19 @@ def snapshot(conn, goal):
 
 
 def _initial_tasks(conn, s):
+    """Fila base: (consulta, origem, só_nestas_fontes|None, tier). tier 0 = consultas prioritárias (fonte principal primeiro),
+    1 = caças, 2 = matriz (só na fonte principal enquanto ela estiver saudável)."""
     base, seen = [], set()
 
-    def add(q, origin, only=None):
-        if only is None:
-            q = sanitize_query(q, s)
-        elif norm(q).strip('"') in commercial.NOISE_TERMS:
+    def add(q, origin, only=None, tier=1):
+        if only and norm(q).strip('"') in commercial.NOISE_TERMS:
             return                       # bet/bets/aposta/apostas nunca como termo principal isolado
         k = ("C|" if only else "") + norm(q)
         if k not in seen:
             seen.add(k)
-            base.append((q, origin, only))
+            base.append((q, origin, only, tier))
+    for q in s.get("priority_queries", []):
+        add(q, None, tier=0)
     matrix_q = []
     for h in conn.execute("SELECT * FROM hunts WHERE enabled=1 ORDER BY position").fetchall():
         if h["kind"] == "expand_confirmed":
@@ -129,11 +131,22 @@ def _initial_tasks(conn, s):
         for q, origin in pipeline._all_hunt_queries(conn, h, s):
             add(q, origin)
     for q in matrix_q:
-        add(q, None)
+        add(q, None, tier=2)
     return base, seen
 
 
-def run_mission(job, goal, depth, mode, sources_list):
+ENV_NAME = {"ddg": "DUCKDUCKGO", "bing": "BING", "tiktok": "TIKTOK", "tiktok_tag": "TIKTOK",
+            "commercial": "TIKTOK COMMERCIAL API", "tiktok_local": "TIKTOK SEARCH LOCAL"}
+
+
+def _is_rate_limit(err):
+    return bool(err) and ("RATE LIMITED" in err or "HTTP 429" in err)
+
+
+def run_mission(job, goal, depth, mode, sources_list, precheck=False):
+    """Fontes por prioridade (TikTok Search Local > Commercial > Bing > DuckDuckGo > TikTok HTML).
+    Falha REAL (timeout, conexão, 403/429/5xx, bloqueio, resposta inválida) conta para pausar a fonte; ZERO resultado
+    em consulta válida NUNCA conta como falha (só reduz a prioridade da fonte após N consultas seguidas)."""
     depth = max(0, min(3, int(depth)))
     complete = mode == "completo"
     with db.connect() as c:
@@ -151,7 +164,6 @@ def run_mission(job, goal, depth, mode, sources_list):
     def push_derived(row, dp):
         nonlocal derived_count
         for _, _, dq in derive_queries(row, s):
-            dq = sanitize_query(dq, s)
             k = norm(dq)
             if k in seen or derived_count >= s.get("derived_max", 400):
                 continue
@@ -162,25 +174,62 @@ def run_mission(job, goal, depth, mode, sources_list):
         derived_from.add(r["id"])
         push_derived(r, 1)
 
-    std = [x for x in sources_list if x in ("ddg", "bing", "tiktok", "tiktok_tag")]
-    want_commercial = "commercial" in sources_list
-    if not std and not want_commercial:
-        std = ["ddg", "bing", "tiktok"]
-    active = list(std)
-    if want_commercial:                   # Commercial API é só mais uma fonte: se indisponível, as demais seguem
-        if commercial.usable(s):
-            active.append("commercial")
+    # ---------- fontes disponíveis (mostradas no painel) e prioridade
+    order = sources.by_priority([x for x in sources_list if x in sources.SOURCE_LABELS]) or ["bing", "ddg", "tiktok"]
+    net_states = {}
+    if precheck:
+        from . import envcheck
+        net_states = envcheck.test_all()
+    estados, active, deprior = {}, [], set()
+    for src in order:
+        label = sources.SOURCE_LABELS.get(src, src)
+        if src == "tiktok_local":
+            est = net_states.get("TIKTOK SEARCH LOCAL") or tiktok_local.check(s)
+            estados[label] = est["estado"]
+            if est["estado"] == tiktok_local.OK:
+                active.append(src)
+            else:
+                job.log(f"TikTok Search Local {est['estado']}: missão segue com as demais fontes")
+        elif src == "commercial":
+            ok = commercial.usable(s) and (not precheck or (net_states.get("TIKTOK COMMERCIAL API") or {}).get("estado") == "OK")
+            estados[label] = (net_states.get("TIKTOK COMMERCIAL API") or {}).get("estado") or ("OK" if ok else "NÃO CONFIGURADA")
+            if ok:
+                active.append(src)
+            else:
+                job.log("TikTok Commercial Content API indisponível/NÃO CONFIGURADA: fonte ignorada nesta missão")
         else:
-            job.log("TikTok Commercial Content API NÃO CONFIGURADA: fonte ignorada nesta missão")
+            active.append(src)
+            if precheck:
+                est = (net_states.get(ENV_NAME[src]) or {}).get("estado", "OK")
+                estados[label] = est
+                if est != "OK":
+                    deprior.add(src)         # não-OK: executa por último/só nas consultas prioritárias
+    for k, v in estados.items():
+        job.log(f"{k}: {v}")
     paused, fails = [], {x: 0 for x in active}
+    zero_streak, backoff = {x: 0 for x in active}, {x: 0.0 for x in active}
     done = enriched = 0
     reason = "consultas esgotadas"
+
+    def pick_sources(q, only, tier):
+        if only:
+            return [x for x in only if x in active]
+        if q.startswith("@"):                                   # busca de usuário: só a fonte nativa
+            return ["tiktok_local"] if "tiktok_local" in active else []
+        cands = [x for x in active if x != "commercial"]
+        if tier == 2 and "tiktok_local" in cands and "tiktok_local" not in deprior:
+            return ["tiktok_local"]                             # matriz: fonte principal antes das fracas
+        if tier >= 2:
+            return [x for x in cands if x not in deprior] or cands
+        return cands
+
     while True:
         with db.connect() as c:
             snap = snapshot(c, goal)
         total_q = done + len(base) + len(derived)
-        job.stats = {**snap, "consultas_feitas": done, "consultas_total": total_q, "fontes_ativas": active,
-                     "fontes_pausadas": paused, "modo": mode, "profundidade": depth, "consulta_atual": job.stats.get("consulta_atual", "")}
+        job.stats = {**snap, "consultas_feitas": done, "consultas_total": total_q, "fontes_ativas": list(active),
+                     "fontes_pausadas": list(paused), "fontes_reduzidas": sorted(deprior), "fontes_estado": estados,
+                     "modo": mode, "profundidade": depth, "consulta_atual": job.stats.get("consulta_atual", "")}
         if job.cancelled:
             reason = "interrompida pelo usuário"; break
         if snap["confirmados"] >= goal:
@@ -189,30 +238,44 @@ def run_mission(job, goal, depth, mode, sources_list):
             reason = f"pool qualificado suficiente ({snap['pool']} candidatos p/ revisão+confirmados)"; break
         if not active:
             reason = "todas as fontes automáticas indisponíveis (use IMPORTAR LISTA / evidência manual)"; break
-        only = None
+        only, tier = None, 3
         if derived:
             q, dp, origin = derived.popleft()
         elif base:
-            q, origin, only = base.popleft(); dp = 0
+            q, origin, only, tier = base.popleft(); dp = 0
         else:
             break
-        run_srcs = [x for x in only if x in active] if only else [x for x in active if x != "commercial"]
+        run_srcs = pick_sources(q, only, tier)
         if not run_srcs:
-            continue                      # sem fonte disponível para esta consulta (ex.: Commercial API não configurada)
+            continue                      # sem fonte disponível para esta consulta
         job.stats["consulta_atual"] = q
         touched, new_ids = set(), []
         for src in run_srcs:
-            if (q, sources.SOURCE_LABELS.get(src, src)) in recent:
+            label = sources.SOURCE_LABELS.get(src, src)
+            if (q, label) in recent:
                 continue
+            if backoff[src]:
+                time.sleep(backoff[src])   # rate limit anterior: reduz o ritmo
             st = pipeline.run_query(q, src, eff, hunt="missão", origin=origin)
             touched |= st["ids"]; new_ids += st["new_ids"]
-            if st.get("error") and st["found"] == 0:
+            if st.get("error") and st["found"] == 0:              # FALHA real
                 fails[src] += 1
+                if _is_rate_limit(st["error"]):
+                    backoff[src] = min(max(backoff[src] * 2, 5.0), 60.0)
+                    job.log(f"⚠ {label}: rate limit — ritmo reduzido ({backoff[src]:.0f}s entre consultas)")
                 if fails[src] >= s.get("source_fail_limit", 3):
                     active.remove(src); paused.append(src)
-                    job.log(f"⚠ fonte {sources.SOURCE_LABELS.get(src, src)} pausada nesta missão ({st['error'][:90]})")
+                    job.log(f"⚠ fonte {label} pausada nesta missão após {fails[src]} falhas seguidas ({st['error'][:90]})")
+            elif st["found"] == 0:                                # consulta VÁLIDA sem resultados: não é falha
+                fails[src] = 0
+                zero_streak[src] += 1
+                if zero_streak[src] >= s.get("zero_deprioritize", 10) and src not in deprior and len(active) > 1:
+                    deprior.add(src)
+                    job.log(f"{label}: {zero_streak[src]} consultas válidas sem resultados — prioridade reduzida (não é erro)")
             else:
                 fails[src] = 0
+                zero_streak[src] = 0
+                backoff[src] = 0.0
             time.sleep(s.get("request_delay", 0))
         done += 1
         with db.connect() as c:
@@ -230,7 +293,7 @@ def run_mission(job, goal, depth, mode, sources_list):
                     pipeline.investigate(r["username"], force=True, source=None)
                 else:
                     visual.run_visual(r["id"], s)
-        if dp < depth:
+        if dp < depth:   # hashtags/domínios/códigos dos candidatos promissores viram novas consultas (até a profundidade)
             with db.connect() as c:
                 for r in promising:
                     if r["id"] not in derived_from:
@@ -243,4 +306,5 @@ def run_mission(job, goal, depth, mode, sources_list):
         snap = snapshot(c, goal)
         pipeline.log_search(c, "missão", f"fim: {reason}", "missão", 0, 0, 0, 0, "", time.time())
     job.stats = {**job.stats, **snap, "motivo_fim": reason}
-    return {"ok": True, "motivo": reason, "consultas": done, **snap, "fontes_pausadas": paused}
+    return {"ok": True, "motivo": reason, "consultas": done, **snap, "fontes_pausadas": paused,
+            "fontes_reduzidas": sorted(deprior)}

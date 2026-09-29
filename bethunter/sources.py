@@ -14,8 +14,16 @@ from . import net
 from .util import (canonical_video_url, clip, extract_hashtags, extract_mentions, parse_tiktok_url, profile_url)
 
 SOURCE_LABELS = {"ddg": "DuckDuckGo", "bing": "Bing", "tiktok": "TikTok Search", "tiktok_tag": "TikTok Hashtag",
-                 "commercial": "TIKTOK_COMMERCIAL_CONTENT_API"}
-SEARCH_SOURCES = ["ddg", "bing", "tiktok"]
+                 "commercial": "TIKTOK_COMMERCIAL_CONTENT_API", "tiktok_local": "TIKTOK_SEARCH_LOCAL"}
+SEARCH_SOURCES = ["tiktok_local", "ddg", "bing", "tiktok"]
+# Prioridade de execução (menor = primeiro). tiktok_playwright: reservado, não implementado.
+SOURCE_PRIORITY = ["tiktok_local", "commercial", "tiktok_playwright", "bing", "ddg", "tiktok", "tiktok_tag"]
+
+
+def by_priority(srcs):
+    """Ordena fontes pela prioridade oficial; fontes desconhecidas vão ao fim (ordem original preservada)."""
+    rank = {s: i for i, s in enumerate(SOURCE_PRIORITY)}
+    return sorted(dict.fromkeys(srcs), key=lambda s: rank.get(s, len(rank)))
 
 
 BLOCK_RX = re.compile(r"(captcha|unusual traffic|verify you are human|are you a robot|anomaly|access denied|"
@@ -147,6 +155,8 @@ def search_tiktok(q, tag=False):
             if h:
                 hits.append(h)
     if not hits:
+        if scope:      # página estruturada carregou e não trouxe itens: consulta válida sem resultados
+            return [], None, url
         return [], "TikTok não retornou resultados públicos (exige JS/login) — use importação ou buscadores", url
     return hits, None, url
 
@@ -163,6 +173,9 @@ def run_source(source, q):
     if source == "commercial":       # provider oficial, mesma interface: (hits, erro, url)
         from . import commercial
         return commercial.search(q)
+    if source == "tiktok_local":     # serviço local externo (HTTP em 127.0.0.1)
+        from . import tiktok_local
+        return tiktok_local.search(q)
     return [], f"fonte desconhecida: {source}", ""
 
 

@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 set PYTHONUTF8=1
-title CIBERLAB - TikTok Bet Hunter
+title RINO
 
 rem --- 1. Python
 set "PY="

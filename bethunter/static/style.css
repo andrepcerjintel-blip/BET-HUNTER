@@ -70,3 +70,6 @@ button.mission-btn{background:#d29922;border-color:#d29922;color:#000;font-weigh
 .review-ov .rv{max-width:1100px;margin:0 auto}.rv .line{margin:6px 0;font-size:15px}.rv .line span.k{color:var(--mut);display:inline-block;min-width:100px}
 .rv .evq{font-size:17px;background:var(--panel2);border-left:4px solid var(--acc);padding:10px 14px;margin:8px 0;border-radius:4px}
 .rv .keys{color:var(--mut);margin-top:12px}
+
+.brand{display:flex;align-items:center;gap:12px}.brand img{height:54px;width:54px;object-fit:cover;border-radius:8px;background:#fff}
+.brand h1{font-size:22px;letter-spacing:2px;margin:0}.brand .sub{font-size:11px;color:var(--mut)}

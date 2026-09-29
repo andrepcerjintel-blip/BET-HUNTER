@@ -4,7 +4,7 @@ import os
 
 from flask import Flask, Response, jsonify, render_template, request
 
-from . import db, envcheck, exporter, mission, net, pipeline, queries, sources, visual
+from . import db, envcheck, exporter, mission, net, pipeline, queries, sources, tiktok_local, visual
 from .util import export_dir, setup_logging
 from .db import jl
 
@@ -199,7 +199,7 @@ def create_app(db_path=None):
     def api_search():
         b = body()
         qs = [q.strip() for q in b.get("queries", []) if q and q.strip()]
-        srcs = b.get("sources") or sources.SEARCH_SOURCES
+        srcs = sources.by_priority(b.get("sources") or sources.SEARCH_SOURCES)
         if b.get("combine_a") and b.get("combine_b"):
             qs += [f'"{a.strip()}" "{c.strip()}"' if " " in a.strip() or " " in c.strip() else f"{a.strip()} {c.strip()}"
                    for a in b["combine_a"] for c in b["combine_b"] if a.strip() and c.strip()]
@@ -210,6 +210,12 @@ def create_app(db_path=None):
             settings = db.get_settings(c)
 
         def go(job):
+            nonlocal srcs
+            if "tiktok_local" in srcs:            # offline não é fatal: segue com as demais fontes
+                est = tiktok_local.check(settings)
+                if est["estado"] != tiktok_local.OK:
+                    srcs = [x for x in srcs if x != "tiktok_local"]
+                    job.log(f"TikTok Search Local {est['estado']}: fonte ignorada")
             tot = {"found": 0, "new": 0, "dups": 0, "errors": 0}
             new_ids, n, steps = [], 0, len(qs) * len(srcs)
             import time
@@ -246,7 +252,7 @@ def create_app(db_path=None):
             s = db.save_settings(c, {"goal": goal, "mission_depth": depth, "mission_mode": mode,
                                      "mission_sources": b.get("sources") or db.get_settings(c)["mission_sources"]})
         job = pipeline.start_job(f"MISSÃO meta {goal} · profundidade {depth} · {mode.upper()}",
-                                 lambda j: mission.run_mission(j, goal, depth, mode, s["mission_sources"]))
+                                 lambda j: mission.run_mission(j, goal, depth, mode, s["mission_sources"], precheck=True))
         return jsonify({"ok": True, "job": job.id})
 
     @app.post("/api/jobs/<jid>/cancel")
@@ -344,6 +350,11 @@ def create_app(db_path=None):
     def api_metrics():
         with db.connect() as c:
             return jsonify(queries.metrics(c))
+
+    @app.get("/api/source-metrics")
+    def api_source_metrics():
+        with db.connect() as c:
+            return jsonify(queries.source_metrics(c))
 
     @app.get("/api/log")
     def api_log():

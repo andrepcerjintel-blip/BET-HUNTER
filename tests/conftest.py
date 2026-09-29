@@ -72,7 +72,7 @@ def env(tmp_path, monkeypatch):
     pages = make_pages()
     calls = []
 
-    def fake_fetch(url, method="GET", allow_redirects=False, timeout=10, headers=None, max_bytes=400_000, params=None):
+    def fake_fetch(url, method="GET", allow_redirects=False, timeout=10, headers=None, max_bytes=400_000, params=None, **_kw):
         calls.append(url)
         if "html.duckduckgo.com" in url:
             return dict(pages["ddg"])

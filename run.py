@@ -1,4 +1,4 @@
-"""CIBERLAB — TIKTOK BET HUNTER. Uso: python run.py [--port 5000] [--db caminho.db] [--no-browser]"""
+"""RINO. Uso: python run.py [--port 5000] [--db caminho.db] [--no-browser]"""
 import argparse
 import os
 import sys
@@ -27,7 +27,7 @@ app = create_app(a.db)                   # cria banco/tabelas/configurações pa
 
 st = envcheck.static_status()
 print("=" * 64)
-print(" CIBERLAB - TIKTOK BET HUNTER")
+print(" RINO")
 print(f" Endereco : http://{a.host}:{a.port}")
 print(f" Banco    : {db._path()}")
 print(f" Logs     : {log_dir()}")

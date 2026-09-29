@@ -1,4 +1,6 @@
-# CIBERLAB — TIKTOK BET HUNTER
+# RINO
+
+![RINO](bethunter/static/rino-logo.webp)
 
 Sistema de **descoberta e correlação de publicidade de apostas** no TikTok: coleta centenas de candidatos,
 pontua por *sinais combinados* (link + CTA + conteúdo + afiliado + recorrência), separa falsos positivos
@@ -34,6 +36,36 @@ Rede: timeout, tentativas extras (padrão 2), intervalo mínimo entre requisiç�
 6. Em um confirmado, **EXPANDIR ESTE PERFIL**.
 7. **EXPORTAR CONFIRMADOS** (CSV/XLSX); o arquivo também fica em `exportacoes\`.
 8. Para volume: **▶ INICIAR MISSÃO**.
+
+## TikTok Search Local — fonte principal de descoberta
+
+O RINO **não** incorpora o projeto [`axmedbek/tiktok-search-api`](https://github.com/axmedbek/tiktok-search-api): ele roda como **serviço separado** (outra porta) e o RINO o consome por HTTP local (`bethunter/tiktok_local.py`). Se o serviço estiver offline, o RINO segue normalmente com Commercial API, Bing, DuckDuckGo, TikTok HTML e importação.
+
+**Subir o serviço no Windows (menos impacto no RINO): Docker Desktop**
+```
+git clone https://github.com/axmedbek/tiktok-search-api
+cd tiktok-search-api
+copy .env.example .env
+docker compose up -d --build api
+curl http://127.0.0.1:8000/health
+```
+Alternativa sem Docker: **WSL2** (o projeto declara Linux/macOS). No terminal do Ubuntu/WSL:
+```
+git clone https://github.com/axmedbek/tiktok-search-api && cd tiktok-search-api
+python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+python mobile/api_signed.py --config mobile/config_direct.yaml --port 8000
+```
+(o Windows acessa `http://127.0.0.1:8000` normalmente). Deixe o serviço com as configurações padrão do projeto, em loopback.
+
+> Aviso do próprio projeto externo: acessar a API privada do TikTok viola os Termos de Serviço da plataforma e é zona cinzenta legal; use somente com autorização/finalidade legítima sobre dados públicos e avalie a conformidade com a política do seu órgão. O RINO apenas consome o JSON local; não configura proxies, dispositivos nem assinatura.
+
+**No RINO** (CONFIG → TikTok Search Local): URL (`http://127.0.0.1:8000`; endpoint `/search`), recência (`24h`, `7d` padrão, `30d`, `90d`, `180d`, `all`), máximo de páginas (10) e resultados por página (20). **TESTAR AMBIENTE** mostra `TIKTOK SEARCH LOCAL`: NÃO CONFIGURADO · OFFLINE · OK ("TikTok Search Local disponível.") · ERRO · RATE LIMITED.
+* Consultas: `Fortune Tiger` → `keyword`; `#fortunetiger` → `hashtag`; `@usuario` → `user` (botão **BUSCAR USUÁRIO** no detalhe). Filtros enviados: `sort_type` e `publish_time` (só em vídeo). Paginação por `page_token` (nunca `next_cursor`).
+* Cada vídeo vira evidência (descrição, hashtags, id/URL do vídeo, data, termo, fonte `TIKTOK_SEARCH_LOCAL`, métricas); vários vídeos do mesmo usuário = um candidato com várias evidências. Métricas são só contexto: **não entram no score**.
+* **Missão**: prioridade `Search Local › Commercial › Bing › DuckDuckGo › TikTok HTML › TikTok Tag`; as 12 consultas prioritárias (editáveis em `priority_queries`) rodam primeiro em todas as fontes; a matriz (CAÇA 14) roda só na fonte principal enquanto ela estiver saudável. Hashtags de candidatos promissores viram novas buscas até a profundidade da missão.
+* **Falha × zero resultados**: HTTP 200 com `results=[]` é consulta válida (não conta como falha). Só timeout, conexão, 403/429/5xx/502/503, bloqueio, resposta inválida ou exceção contam; 3 falhas reais seguidas pausam a fonte. 10 consultas válidas seguidas sem resultado apenas **reduzem a prioridade** da fonte. 429 reduz o ritmo (espera crescente) e a missão segue com as demais.
+* **MÉTRICAS → Métricas por fonte**: consultas, resultados brutos, candidatos únicos, zero resultados, erros, tempo médio, resultados/consulta e candidatos/consulta.
+* **Teste curto de descoberta** (banco temporário): `python demo/medir_descoberta.py` (serviço real) ou `--stub` (serviço simulado, valida o pipeline).
 
 ## TikTok Commercial Content API (fonte oficial adicional, opcional)
 
@@ -110,6 +142,7 @@ bethunter/config.py        # padrões: pesos, limites, léxicos, jogos, caças
 bethunter/db.py            # SQLite (esquema, configurações)
 bethunter/envcheck.py      # STATUS DO AMBIENTE / TESTAR AMBIENTE
 bethunter/commercial.py    # provider TikTok Commercial Content API (opcional)
+bethunter/tiktok_local.py  # provider TikTok Search Local (serviço externo via HTTP local)
 bethunter/urltools.py      # parâmetros de afiliado, cadeia de redirecionamento, agregadores
 bethunter/extract.py       # extração de sinais do texto
 bethunter/scoring.py       # score explicável + classificador de falso positivo

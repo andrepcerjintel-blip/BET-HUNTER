@@ -416,7 +416,7 @@ def ingest_hits(conn, hits, settings, *, hunt="", origin=None, resolved=None):
         kind = ("video" if h["video_url"] else "snippet") if text.strip() else "relacao"
         add_evidence(conn, cid, kind, source=h["source"], source_url=h["video_url"] or h["source_url"],
                      query=h["query"], url_video=h["video_url"], caption=text if h["video_url"] else "",
-                     text="" if h["video_url"] else text)
+                     text="" if h["video_url"] else text, hashtags=h.get("hashtags"), meta=h.get("meta"))
         mine = {u2: resolved[u2] for u2 in extract_urls(text) if u2 in resolved}
         if mine:
             save_links(conn, cid, mine, "snippet", settings)
@@ -435,7 +435,13 @@ def log_search(conn, hunt, query, source, found, new, dups, errors, msg, t0):
 def run_query(q, source, settings, hunt="", origin=None):
     """Executa UMA consulta em UMA fonte: rede -> ingestão -> log."""
     from . import mission
-    if source != "commercial":               # a API oficial recebe o termo como está (exceto bet/bets/aposta/apostas)
+    if source == "commercial":
+        pass                                  # a API oficial recebe o termo como está (bet/bets/aposta/apostas são ignorados nela)
+    elif source == "tiktok_local":            # busca nativa: termos de jogo entram como estão; só o ruído puro é combinado
+        from . import commercial
+        if norm(q).strip('"# ') in commercial.NOISE_TERMS:
+            q = mission.sanitize_query(q, settings)
+    else:
         q = mission.sanitize_query(q, settings)   # termo genérico nunca vai sozinho
     t0 = time.time()
     try:
@@ -454,7 +460,7 @@ def run_query(q, source, settings, hunt="", origin=None):
         except Exception as e:
             log.exception("CONSULTA=%s | falha na resolução de URLs", q)
             err = (err or "") + f" (resolução de URLs: {type(e).__name__})"
-    label = sources.SOURCE_LABELS[source] if source == "commercial" else (origin or sources.SOURCE_LABELS.get(source, source))
+    label = sources.SOURCE_LABELS[source] if source in ("commercial", "tiktok_local") else (origin or sources.SOURCE_LABELS.get(source, source))
     if err:
         log.warning("FONTE=%s | CONSULTA=%s | ERRO=%s", sources.SOURCE_LABELS.get(source, source), q, err)
     with db.connect() as conn:
@@ -584,6 +590,19 @@ def indicator_queries(row, settings):
     return out
 
 
+def drop_offline_local(srcs, settings, job=None):
+    """Serviço local offline/indisponível não é fatal: remove a fonte e segue com as demais."""
+    if "tiktok_local" not in srcs:
+        return srcs
+    from . import tiktok_local
+    est = tiktok_local.check(settings)
+    if est["estado"] == tiktok_local.OK:
+        return srcs
+    if job:
+        job.log(f"TikTok Search Local {est['estado']}: fonte ignorada")
+    return [x for x in srcs if x != "tiktok_local"]
+
+
 def expand_candidate(cid, search=True, job=None):
     """ENCONTRAR PERFIS RELACIONADOS: menções/marcados + buscas por indicadores + relacionados já na base."""
     with db.connect() as conn:
@@ -613,6 +632,7 @@ def expand_candidate(cid, search=True, job=None):
             srcs = list(settings.get("expand_sources", ["ddg", "bing"]))
             if tipo == "hashtag":
                 srcs = ["tiktok_tag"] + [s for s in srcs if s != "tiktok"]
+            srcs = sources.by_priority(drop_offline_local(srcs, settings, job))
             for s in srcs:
                 st = run_query(q, s, settings, hunt=f"expansão de @{seed}", origin="expansão automática")
                 searches.append({"tipo": tipo, "valor": val, "consulta": q, "fonte": s, "encontrados": st["found"],
@@ -639,12 +659,19 @@ def indicator_search(kind, value, job=None):
         q, origin = "#" + v.lstrip("#"), "hashtag"
     elif kind == "plataforma":
         q, origin = f'"{v}" link na bio', "plataforma"
+    elif kind == "usuário":
+        q, origin = "@" + v.lstrip("@"), "usuário"
     else:
         q, origin = v, "busca livre"
     total = {"found": 0, "new": 0, "dups": 0, "errors": []}
     srcs = list(settings.get("expand_sources", ["ddg", "bing", "tiktok"]))
     if kind == "hashtag":
         srcs = ["tiktok_tag"] + srcs
+    if kind == "usuário":
+        srcs = ["tiktok_local"]                 # busca de usuário: só a fonte nativa
+    elif "tiktok_local" not in srcs:
+        srcs = ["tiktok_local"] + srcs          # fonte principal primeiro
+    srcs = sources.by_priority(drop_offline_local(srcs, settings, job))
     for s in srcs:
         st = run_query(q, s, settings, hunt=f"busca recursiva: {kind}", origin=origin)
         total["found"] += st["found"]; total["new"] += st["new"]; total["dups"] += st["dups"]
@@ -705,6 +732,14 @@ def run_hunt(hunt_id, job=None):
         srcs = [x for x in srcs if x != "commercial"]      # não configurada: ignora sem repetir erro
         if job:
             job.log("TikTok Commercial Content API NÃO CONFIGURADA: fonte ignorada nesta caça")
+    if "tiktok_local" in srcs:
+        from . import tiktok_local
+        est = tiktok_local.check(settings)
+        if est["estado"] != tiktok_local.OK:              # offline não é fatal: segue com as demais fontes
+            srcs = [x for x in srcs if x != "tiktok_local"]
+            if job:
+                job.log(f"TikTok Search Local {est['estado']}: fonte ignorada nesta caça")
+    srcs = sources.by_priority(srcs)
     tasks = [(q, s, o) for q, o in qs for s in srcs]
     total_steps = len(tasks) + len(expand_ids)
     tot = {"found": 0, "new": 0, "dups": 0, "errors": 0}

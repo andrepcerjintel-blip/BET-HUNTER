@@ -32,7 +32,7 @@ def gen_source(calls=None, err=None):
 def only_matrix(small=True, extra=None):
     with db.connect() as c:
         c.execute("UPDATE hunts SET enabled=0 WHERE kind!='matrix'")
-        patch = {"request_delay": 0, "enrich_after_search": False}
+        patch = {"request_delay": 0, "enrich_after_search": False, "priority_queries": []}
         if small:
             patch["matrix"] = {"A": ["Fortune Tiger", "Aviator"], "B": ["link na bio", "cadastre-se"], "C": ["saque"], "D": ["código"]}
         patch.update(extra or {})

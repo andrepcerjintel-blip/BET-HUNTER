@@ -404,7 +404,7 @@ def mission_setup(terms):
     with db.connect() as c:
         c.execute("UPDATE hunts SET enabled=0 WHERE kind NOT IN ('matrix','commercial')")
         db.save_settings(c, {"matrix": {"A": ["Fortune Tiger"], "B": ["link na bio"], "C": ["saque"], "D": ["código"]},
-                             "commercial_api_terms": terms, "enrich_after_search": False})
+                             "commercial_api_terms": terms, "enrich_after_search": False, "priority_queries": []})
 
 
 def test_mission_includes_commercial_plus_other_providers(creds, monkeypatch):

@@ -116,6 +116,13 @@ def init_db(path=None):
             # regra antiga (auto-descartar) -> nova: BAIXA RELEVÂNCIA sem decisão do analista
             c.execute("UPDATE candidates SET status='BAIXA RELEVÂNCIA' WHERE status='DESCARTADO' AND status_manual=0")
             c.execute("INSERT INTO settings(key,value) VALUES('migrated_v2','1')")
+        if not c.execute("SELECT 1 FROM settings WHERE key='migrated_v3'").fetchone():
+            # v3: caças existentes passam a consultar primeiro o TikTok Search Local (sem tirar nenhuma fonte)
+            for h in c.execute("SELECT id, kind, sources FROM hunts").fetchall():
+                srcs = json.loads(h["sources"] or "[]")
+                if h["kind"] != "commercial" and "tiktok_local" not in srcs and srcs:
+                    c.execute("UPDATE hunts SET sources=? WHERE id=?", (json.dumps(["tiktok_local"] + srcs), h["id"]))
+            c.execute("INSERT INTO settings(key,value) VALUES('migrated_v3','1')")
         if c.execute("SELECT 1 FROM hunts LIMIT 1").fetchone():
             # bancos existentes: garante as caças novas sem tocar nas que o analista editou
             for name, kind, _q in config.DEFAULT_HUNTS:

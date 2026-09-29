@@ -81,7 +81,7 @@ def _request(method, url, timeout, throttle, **kw):
 
 
 def fetch(url, method="GET", allow_redirects=False, timeout=None, headers=None, max_bytes=400_000, params=None,
-          throttle=True):
+          throttle=True, allow_local=False):
     """-> {'status': int|None, 'url': str, 'location': str|None, 'text': str, 'error': str|None}. Nunca levanta exceção."""
     timeout = timeout or CFG["timeout"]
     out = {"status": None, "url": url, "location": None, "text": "", "error": None}
@@ -89,7 +89,7 @@ def fetch(url, method="GET", allow_redirects=False, timeout=None, headers=None, 
     if p.scheme not in ("http", "https") or not p.hostname:
         out["error"] = "esquema/URL inválido"
         return out
-    if not _public_host(p.hostname):
+    if not allow_local and not _public_host(p.hostname):     # allow_local: URL de serviço local configurada pelo administrador
         out["error"] = "host privado bloqueado"
         return out
     h = dict(HEADERS)
@@ -117,14 +117,14 @@ def fetch(url, method="GET", allow_redirects=False, timeout=None, headers=None, 
     return out
 
 
-def post(url, headers=None, data=None, json_body=None, params=None, timeout=None):
+def post(url, headers=None, data=None, json_body=None, params=None, timeout=None, allow_local=False):
     """POST (form ou JSON) com timeout/retry de conexão/ritmo. Nunca levanta e NUNCA registra corpo/credenciais.
     -> {'status', 'json', 'text', 'retry_after', 'error'}"""
     timeout = timeout or CFG["timeout"]
     out = {"status": None, "json": None, "text": "", "retry_after": None, "error": None}
     p = urlparse(url)
-    if p.scheme != "https" or not p.hostname:
-        out["error"] = "URL inválida (é exigido https)"
+    if not p.hostname or p.scheme not in (("http", "https") if allow_local else ("https",)):
+        out["error"] = "URL inválida" + ("" if allow_local else " (é exigido https)")
         return out
     h = {"User-Agent": HEADERS["User-Agent"], "Accept": "application/json"}
     h.update(headers or {})

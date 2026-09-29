@@ -5,7 +5,7 @@ const jq = s => esc(JSON.stringify(String(s ?? '')));  // literal JS seguro dent
 const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : '';
 const NI = 'NÃO IDENTIFICADO';
 const STATUSES = ['NOVO','REVISAR','CONFIRMADO','DESCARTADO','BAIXA RELEVÂNCIA','DUPLICADO','PERFIL INDISPONÍVEL','CONTEÚDO REMOVIDO','JÁ ENCAMINHADO'];
-const SOURCES = [['ddg','DuckDuckGo'],['bing','Bing'],['tiktok','TikTok Search'],['tiktok_tag','TikTok Hashtag'],['commercial','TikTok Commercial Content API']];
+const SOURCES = [['tiktok_local','TikTok Search Local'],['ddg','DuckDuckGo'],['bing','Bing'],['tiktok','TikTok Search'],['tiktok_tag','TikTok Hashtag'],['commercial','TikTok Commercial Content API']];
 let CSTATE = 'NÃO CONFIGURADA';   // estado da Commercial API (sem rede; vem de /api/env)
 async function loadCState() { try { CSTATE = ((await api('/api/env'))['TIKTOK COMMERCIAL API'] || {}).estado || CSTATE; } catch (e) {} }
 const srcCheck = (k, n, cls, on) => { const off = k === 'commercial' && CSTATE === 'NÃO CONFIGURADA';
@@ -236,6 +236,7 @@ async function showDetail(id, host) {
        ${(e.tags || []).map(t => `<span class="tag pp">${esc(t)}</span>`).join('')}<span class="mut"> ${esc(e.data)} ${esc(e.hora)} ${esc(e.fuso)} · ${esc(e.source || NI)}</span>
        <div>${esc(e.caption || e.text || NI)}</div>
        ${e.url_video ? `<div><a href="${esc(safeUrl(e.url_video))}" target="_blank" rel="noopener">${esc(e.url_video)}</a></div>` : ''}
+       ${e.meta && e.meta.source === 'TIKTOK_SEARCH_LOCAL' ? `<div class="mut">TIKTOK_SEARCH_LOCAL · vídeo ${esc(e.meta.video_id || NI)} · criado ${esc(e.meta.create_time || NI)} · região ${esc(e.meta.region_code || NI)} · hashtags ${esc((e.hashtags || []).map(h => '#' + h).join(' ') || NI)} · métricas (só contexto): ${esc(Object.entries(e.meta.metrics || {}).filter(([, v]) => v != null).map(([k, v]) => k + ' ' + v).join(', ') || NI)} · termo “${esc(e.meta.term || '')}”</div>` : ''}
        ${e.source_url && e.source_url !== e.url_video ? `<div class="mut">fonte consultada: ${esc(e.source_url)}</div>` : ''}${e.query ? `<div class="mut">consulta: ${esc(e.query)}</div>` : ''}</div>`).join('') || '<div class="box warn">Nenhuma evidência registrada.</div>'}
      <h3>Adicionar evidência manual</h3>${manualForm(d.id)}
      <h3>Como foi encontrado</h3>${d.discoveries.map(x => `<div class="mut">${esc(x.source)} · “${esc(x.query)}” ${x.hunt ? '· ' + esc(x.hunt) : ''} · ${esc(fmtDate(x.found_at))}</div>`).join('')}</div></div>`;
@@ -266,7 +267,8 @@ function missionPanel(j) {
   return `<div style="font-weight:700;color:var(--warn)">${j.status === 'running' ? 'BUSCA EM EXECUÇÃO' : 'BUSCA ' + (j.cancelled ? 'INTERROMPIDA' : 'CONCLUÍDA')}</div>
    <div class="mstat">${row('Consulta atual', s.consulta_atual || '—')}${row('Consultas', `${s.consultas_feitas} / ${s.consultas_total}`)}${row('Resultados brutos', s.brutos)}
    ${row('Candidatos únicos', s.unicos)}${row('Alta probabilidade', s.alta)}${row('Em revisão', s.em_revisao)}${row('Confirmados', `${s.confirmados} / ${s.meta}`)}
-   ${row('Descartados', s.descartados)}${row('Clusters', s.clusters)}${row('Fontes', (s.fontes_ativas || []).join(', ') + ((s.fontes_pausadas || []).length ? ' · pausadas: ' + s.fontes_pausadas.join(', ') : ''))}
+   ${row('Descartados', s.descartados)}${row('Clusters', s.clusters)}${row('Fontes ativas', (s.fontes_ativas || []).join(' > ') + ((s.fontes_pausadas || []).length ? ' · pausadas (falhas): ' + s.fontes_pausadas.join(', ') : '') + ((s.fontes_reduzidas || []).length ? ' · prioridade reduzida: ' + s.fontes_reduzidas.join(', ') : ''))}
+   ${Object.keys(s.fontes_estado || {}).length ? row('Estado das fontes', Object.entries(s.fontes_estado).map(([k, v]) => k + ': ' + v).join(' · ')) : ''}
    ${s.motivo_fim ? row('Encerrada', s.motivo_fim) : ''}</div>`;
 }
 async function trackJob(jobId, onDone) {
@@ -289,7 +291,9 @@ async function openMission() {
      <select id="mDepth">${[0, 1, 2, 3].map(d => `<option ${d === s.mission_depth ? 'selected' : ''}>${d}</option>`).join('')}</select>
      MODO <select id="mMode"><option value="rapido" ${s.mission_mode === 'rapido' ? 'selected' : ''}>RÁPIDO (texto, bio, URL, domínio, score)</option><option value="completo" ${s.mission_mode === 'completo' ? 'selected' : ''}>COMPLETO (+ redirecionamentos, perfis, páginas, visual)</option></select></div>
    <div class="filters">${SOURCES.map(([k, n]) => srcCheck(k, n, 'mSrc', (s.mission_sources || []).includes(k))).join('')}</div>
+   <div class="filters"><button class="sm" id="mCheck">verificar fontes agora</button><span class="mut">a missão executa primeiro as fontes em OK, na ordem: Search Local › Commercial › Bing › DuckDuckGo › TikTok</span></div><div id="mEnv"></div>
    <button class="mission-btn" id="mGo">▶ INICIAR</button>`, 'sm');
+  $('#mCheck', m).onclick = async () => { $('#mEnv', m).innerHTML = '<span class="mut">testando…</span>'; try { $('#mEnv', m).innerHTML = envHtml(await api('/api/env/test', {method: 'POST', json: {}})); } catch (e) { $('#mEnv', m).textContent = '⚠ ' + e.message; } };
   $('#mGo', m).onclick = async () => {
     const r = await api('/api/mission/start', {json: {goal: +$('#mGoal', m).value, depth: +$('#mDepth', m).value, mode: $('#mMode', m).value, sources: [...m.querySelectorAll('.mSrc:checked')].map(c => c.value)}});
     m.remove(); trackJob(r.job, j => j.result && toast(`Missão encerrada: ${j.result.motivo}`, 10000));
@@ -466,7 +470,9 @@ async function saveGoal() { await api('/api/settings', {method: 'PUT', json: {go
 async function renderMetrics() {
   const m = await api('/api/metrics'); const pct = x => x == null ? '—' : (x * 100).toFixed(0) + '%';
   const tbl = (rows, cols) => `<table><thead><tr>${cols.map(c => `<th>${c[0]}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${esc(c[1](r))}</td>`).join('')}</tr>`).join('') || '<tr><td class="mut">sem dados</td></tr>'}</tbody></table>`;
-  $('#view').innerHTML = `<h2>MÉTRICAS</h2><div class="box warn">${esc(m.aviso)}</div><div id="panel2" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+  const sm = await api('/api/source-metrics');
+  const srcTbl = `<h3>Métricas por fonte</h3>` + tbl(sm, [['fonte', r => r.fonte], ['consultas', r => r.consultas], ['resultados brutos', r => r.resultados_brutos], ['candidatos únicos', r => r.candidatos_unicos], ['zero resultados', r => r.zero_resultados], ['erros', r => r.erros], ['tempo médio', r => r.tempo_medio_ms + ' ms'], ['resultados/consulta', r => r.resultados_por_consulta], ['candidatos/consulta', r => r.candidatos_por_consulta]]);
+  $('#view').innerHTML = `<h2>MÉTRICAS</h2>${srcTbl}<div class="box warn">${esc(m.aviso)}</div><div id="panel2" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
    <div class="card"><div class="n">${pct(m.taxa_falso_positivo)}</div><div class="l">taxa de falso positivo (descartes manuais)</div></div><div class="card"><div class="n">${pct(m.taxa_confirmacao)}</div><div class="l">taxa de confirmação</div></div>
    <div class="card"><div class="n">${m.confirmados}</div><div class="l">confirmados</div></div><div class="card"><div class="n">${m.decididos}</div><div class="l">decididos pelo analista</div></div></div>
    <div class="grid2"><div><h3>Melhores consultas</h3>${tbl(m.melhores_consultas, [['consulta', r => r.valor], ['achados', r => r.total], ['confirm.', r => r.confirmados], ['descart.', r => r.descartados]])}
@@ -480,9 +486,9 @@ async function renderLog() {
 }
 
 /* ------------------------------------------------------------ ambiente */
-const ENV_ORDER = ['INTERNET', 'DUCKDUCKGO', 'BING', 'TIKTOK', 'TIKTOK COMMERCIAL API', 'YT-DLP', 'ANTHROPIC', 'TESSERACT', 'BANCO', 'VISUAL_ANALYSIS'];
+const ENV_ORDER = ['INTERNET', 'TIKTOK SEARCH LOCAL', 'DUCKDUCKGO', 'BING', 'TIKTOK', 'TIKTOK COMMERCIAL API', 'YT-DLP', 'ANTHROPIC', 'TESSERACT', 'BANCO', 'VISUAL_ANALYSIS'];
 function envHtml(st) {
-  const cls = e => ['OK', 'INSTALADO', 'CONFIGURADO', 'DISPONÍVEL'].includes(e) ? 'pos' : (['ERRO', 'BLOQUEADO', 'AUTENTICAÇÃO FALHOU', 'SEM PERMISSÃO PARA O ENDPOINT', 'RATE LIMITED'].includes(e) ? 'neg' : 'mut');
+  const cls = e => ['OK', 'INSTALADO', 'CONFIGURADO', 'DISPONÍVEL'].includes(e) ? 'pos' : (['ERRO', 'BLOQUEADO', 'OFFLINE', 'AUTENTICAÇÃO FALHOU', 'SEM PERMISSÃO PARA O ENDPOINT', 'RATE LIMITED'].includes(e) ? 'neg' : 'mut');
   return `<div class="kv" style="grid-template-columns:170px 150px 1fr">${ENV_ORDER.filter(k => st[k]).map(k => `<div>${k}</div><div><b class="${cls(st[k].estado)}">${esc(st[k].estado)}</b></div><div class="mut">${esc(st[k].detalhe || '')}</div>`).join('')}</div>`;
 }
 async function openEnv() {
@@ -512,6 +518,11 @@ async function renderConfig() {
    <div>${ta('cPlat', s.platforms, 'Plataformas (Nome|dominio1,dominio2)')}${ta('cDom', s.bet_domains, 'Domínios de apostas conhecidos')}</div></div>
    <div class="grid2"><div>${ta('cAgg', s.aggregators, 'Agregadores de links')}</div><div>${ta('cGen', s.generic_games, 'Termos de jogo genéricos (não bastam p/ “gameplay”)')}</div></div>
    <h3>Matriz de consultas (Grupos A–D; a missão combina A+B, A+C, B+C, A+D, B+D)</h3><div class="grid2"><div>${ta('mxA', s.matrix.A, 'A — jogos')}${ta('mxC', s.matrix.C, 'C — financeiro')}</div><div>${ta('mxB', s.matrix.B, 'B — CTA')}${ta('mxD', s.matrix.D, 'D — afiliados')}</div></div>
+   <h3>TikTok Search Local (fonte principal de descoberta — serviço externo em outra porta)</h3>
+   <div class="box"><div class="filters">URL do serviço <input id="tlUrl" value="${esc(s.tiktok_search_local_url)}" placeholder="http://127.0.0.1:8000" style="flex:1;max-width:none">
+     Recência <select id="tlRec">${['24h', '7d', '30d', '90d', '180d', 'all'].map(v => `<option ${s.tiktok_search_recency === v ? 'selected' : ''}>${v}</option>`).join('')}</select>
+     Máx. páginas <input id="tlPages" type="number" min="1" value="${s.tiktok_search_max_pages}" style="width:65px"> Resultados/página <input id="tlLim" type="number" min="1" value="${s.tiktok_search_limit}" style="width:65px"></div>
+     <div class="mut">Endpoint usado: <code>${esc(s.tiktok_search_local_url)}/search</code> (POST). Não é necessário para o RINO funcionar: se estiver OFFLINE, as demais fontes seguem.</div></div>
    <h3>TikTok Commercial Content API (fonte opcional)</h3>
    <div class="box"><div class="filters"><label class="i"><input type="checkbox" id="caOn" ${s.commercial_api_enabled ? 'checked' : ''}>habilitada</label> País <input id="caCountry" maxlength="2" value="${esc(s.commercial_api_country)}" style="width:55px">
      Máx. páginas <input id="caPages" type="number" min="1" value="${s.commercial_api_max_pages}" style="width:65px"> max_count/página <input id="caMax" type="number" min="1" value="${s.commercial_api_max_count}" style="width:65px">
@@ -530,6 +541,7 @@ async function saveConfig(re) {
     request_delay: +$('#cDelay').value, enrich_max: +$('#cEnr').value, http_timeout: +$('#cTo').value, http_max_retries: +$('#cRt').value, http_min_interval: +$('#cMi').value, auto_discard_low: $('#cAuto').checked, resolve_links: $('#cRes').checked, enrich_after_search: $('#cEnrich').checked,
     games: lines($('#cGames').value), hashtags: lines($('#cHash').value).map(h => h.replace(/^#/, '')), platforms: lines($('#cPlat').value), bet_domains: lines($('#cDom').value),
     aggregators: lines($('#cAgg').value), generic_games: lines($('#cGen').value), lexicons: lex,
+    tiktok_search_local_url: $('#tlUrl').value.trim(), tiktok_search_recency: $('#tlRec').value, tiktok_search_max_pages: +$('#tlPages').value, tiktok_search_limit: +$('#tlLim').value,
     commercial_api_enabled: $('#caOn').checked, commercial_api_country: $('#caCountry').value.trim().toUpperCase() || 'BR', commercial_api_max_pages: +$('#caPages').value,
     commercial_api_max_count: +$('#caMax').value, commercial_api_range: $('#caRange').value, commercial_api_date_from: $('#caFrom').value, commercial_api_date_to: $('#caTo').value,
     commercial_api_token_url: $('#caTok').value.trim(), commercial_api_terms: lines($('#caTerms').value),

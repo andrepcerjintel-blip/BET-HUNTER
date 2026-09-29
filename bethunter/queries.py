@@ -120,6 +120,8 @@ def candidate_detail(conn, cid):
     d["visuals"] = [{"url_video": v["url_video"], "engine": v["engine"], "signals": jl(v["signals"], {}),
                      "text": v["text"]} for v in conn.execute("SELECT * FROM visuals WHERE candidate_id=?", (cid,))]
     d["indicators"] = [{"tipo": t, "valor": v, "consulta": q} for t, v, q in pipeline.indicator_queries(r, s)]
+    if r["profile_url"]:     # perfil real (não anúncio): pode alimentar BUSCAR USUÁRIO
+        d["indicators"].append({"tipo": "usuário", "valor": r["username"], "consulta": "@" + r["username"]})
     d["total_score_bruto"] = r["base_raw"] + sum(x["pts"] for x in d["reasons"] if x["key"] == "shared_domain")
     return d
 
@@ -239,6 +241,24 @@ def metrics(conn):
         "jogos": top("games"),
         "aviso": "Métricas operacionais de apoio ao trabalho de triagem; não constituem conclusão jurídica.",
     }
+
+
+def source_metrics(conn):
+    """Métricas operacionais por fonte (a partir do log de pesquisas): consultas, resultados brutos, candidatos novos
+    trazidos, zero resultados (consulta válida), erros, tempo médio e aproveitamento por consulta."""
+    out = []
+    rows = conn.execute(
+        "SELECT source, COUNT(*) q, COALESCE(SUM(found),0) brutos, COALESCE(SUM(new),0) unicos, "
+        "SUM(CASE WHEN found=0 AND errors=0 THEN 1 ELSE 0 END) zero, COALESCE(SUM(errors),0) erros, "
+        "COALESCE(AVG(duration_ms),0) ms FROM search_log WHERE source NOT IN ('missão','visual') GROUP BY source "
+        "ORDER BY brutos DESC").fetchall()
+    for r in rows:
+        q = r["q"] or 1
+        out.append({"fonte": r["source"], "consultas": r["q"], "resultados_brutos": r["brutos"],
+                    "candidatos_unicos": r["unicos"], "zero_resultados": r["zero"] or 0, "erros": r["erros"],
+                    "tempo_medio_ms": int(r["ms"]), "resultados_por_consulta": round(r["brutos"] / q, 2),
+                    "candidatos_por_consulta": round(r["unicos"] / q, 2)})
+    return out
 
 
 def search_log(conn, limit=200):

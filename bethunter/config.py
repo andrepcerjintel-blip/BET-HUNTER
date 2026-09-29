@@ -73,7 +73,7 @@ DEFAULT_SETTINGS = {
         "instagram.com", "facebook.com", "youtube.com", "youtu.be", "twitter.com", "x.com", "tiktok.com",
         "google.com", "spotify.com", "kwai.com", "pinterest.com", "linkedin.com", "twitch.tv", "apple.com",
     ],
-    "expand_sources": ["ddg", "bing", "tiktok"],
+    "expand_sources": ["tiktok_local", "bing", "ddg", "tiktok"],
     # ---- matriz de consultas (grupos A-D) e missão
     "matrix": {
         "A": ["Fortune Tiger", "Tigrinho", "Aviator", "Mines", "Spaceman", "Crash", "Plinko", "slots", "roleta"],
@@ -86,7 +86,18 @@ DEFAULT_SETTINGS = {
                       "slots", "roleta", "mines", "crash", "plinko"],
     "mission_depth": 2,            # 0..3
     "mission_mode": "rapido",      # rapido | completo
-    "mission_sources": ["ddg", "bing", "tiktok", "commercial"],   # commercial só roda se configurada
+    # ordem = prioridade: 1 TikTok Search Local, 2 Commercial API, (3 Playwright: não implementado), 4 Bing, 5 DDG, 6-7 TikTok HTML
+    "mission_sources": ["tiktok_local", "commercial", "bing", "ddg", "tiktok", "tiktok_tag"],
+    "priority_queries": ["Fortune Tiger", "Tigrinho", "Aviator", "Mines", "Spaceman", "Plinko", "cassino online",
+                         "slot pagando", "plataforma pagando", "saque imediato", "grupo vip", "código promocional"],
+    "zero_deprioritize": 10,       # N consultas válidas seguidas com 0 resultados -> fonte perde prioridade (NÃO é falha)
+    # ---- TikTok Search Local (serviço externo em outra porta; RINO só consome por HTTP)
+    "tiktok_search_local_url": "http://127.0.0.1:8000",   # endpoint: <url>/search ; saúde: <url>/health
+    "tiktok_search_recency": "7d",           # 24h | 7d | 30d | 90d | 180d | all
+    "tiktok_search_max_pages": 10,
+    "tiktok_search_limit": 20,               # resultados por página
+    "tiktok_search_sort": "0",               # 0 relevância | 1 mais curtidos
+    "tiktok_search_timeout": 40,
     "pool_factor": 2.5,            # a descoberta também para quando o pool qualificado chega a meta*fator
     "derived_per_candidate": 6,
     "derived_max": 400,
@@ -207,7 +218,7 @@ DEFAULT_HUNTS = [
     ("CAÇA 13 — TIKTOK COMMERCIAL CONTENT", "commercial", []),
     ("CAÇA 14 — matriz de consultas (jogos × CTA × financeiro × afiliados)", "matrix", []),
 ]
-DEFAULT_HUNT_SOURCES = ["ddg", "bing", "tiktok"]
+DEFAULT_HUNT_SOURCES = ["tiktok_local", "bing", "ddg", "tiktok"]
 
 
 def default_settings():
