@@ -5,19 +5,35 @@ pontua por *sinais combinados* (link + CTA + conteúdo + afiliado + recorrência
 (notícia, crítica, legislação, prevenção…), agrupa perfis por domínio/afiliado e leva o analista a uma lista
 validada com evidência rastreável. **O score é apoio à triagem; a confirmação final é sempre humana.**
 
-## Rodar
+## Rodar no Windows
 
-```bash
-pip install -r requirements.txt
-python run.py                 # abre http://127.0.0.1:5000  (banco: data/bethunter.db)
-python run.py --db outro.db --port 8080
+1. Instale o Python 3.10+ (python.org, marcando "Add Python to PATH").
+2. Dê duplo clique em **`iniciar.bat`**: cria `.venv`, instala as dependências (e o `yt-dlp` opcional) só se faltarem e abre http://127.0.0.1:5000.
 
-# demonstração com dados 100% fictícios (banco separado)
-python demo/seed_demo.py --n 400 --db data/demo.db && python run.py --db data/demo.db
+Manual (qualquer sistema): `python -m venv .venv` → ativar → `pip install -r requirements.txt` → `python run.py` (`--port`, `--db`, `--no-browser`).
 
-pytest                        # testes (rede simulada, dados fictícios)
-```
-Stack: Python + Flask + SQLite + HTML/JS puro. Sem API paga, sem build, sem serviços.
+| O quê | Onde |
+|---|---|
+| Banco SQLite (criado sozinho na 1ª execução; reiniciar/atualizar não apaga nada) | `data\bethunter.db` |
+| Logs (fonte, consulta, erro; detalhes técnicos) | `logs\bethunter.log` + aba **LOG** da interface |
+| Exportações (cópia salva a cada download) | `exportacoes\` |
+| Dependências obrigatórias | `requirements.txt` (flask, requests, beautifulsoup4, openpyxl) |
+| Opcionais | `requirements-opcional.txt` (yt-dlp) · Tesseract (instalador Windows) · `ANTHROPIC_API_KEY` |
+
+**Opcionais** (o programa funciona sem qualquer um deles; a interface mostra INSTALADO/CONFIGURADO ou NÃO INSTALADO/NÃO CONFIGURADO):
+copie `.env.example` para `.env` e preencha `ANTHROPIC_API_KEY=` para ativar a análise visual multimodal (a chave só é lida do ambiente, nunca vai para o banco/código); instale o Tesseract para OCR leve; o yt-dlp é instalado pelo `iniciar.bat`.
+Rede: timeout, tentativas extras (padrão 2), intervalo mínimo entre requisições e uma requisição por vez são configuráveis em **CONFIG**. Bloqueios/captcha são registrados e a fonte seguinte continua; nada é contornado.
+
+## TESTE LOCAL
+
+1. Execute `iniciar.bat` e abra a aplicação.
+2. Clique **TESTAR AMBIENTE**: veja INTERNET, DUCKDUCKGO, BING, TIKTOK, YT-DLP, ANTHROPIC, TESSERACT e BANCO.
+3. Aba **CAÇAS** → execute uma caça (ex.: CAÇA 05) e acompanhe o painel; confira erros na aba **LOG**.
+4. Verifique os candidatos em **RESULTADOS** (e **PENDENTES DE VALIDAÇÃO**).
+5. **▶ REVISÃO ULTRARRÁPIDA**: `C` confirma, `D` descarta, `S` próximo, `X` expande, `Ctrl+Z` desfaz.
+6. Em um confirmado, **EXPANDIR ESTE PERFIL**.
+7. **EXPORTAR CONFIRMADOS** (CSV/XLSX); o arquivo também fica em `exportacoes\`.
+8. Para volume: **▶ INICIAR MISSÃO**.
 
 ## Missão (fluxo principal)
 
@@ -64,15 +80,15 @@ RÁPIDO = texto/bio/URL/domínio/score. COMPLETO = também resolve redirecioname
 
 ## Fontes e limitações (leia)
 
-| Fonte | Estado |
+| Fonte | Uso |
 |---|---|
-| Busca via DuckDuckGo / Bing (`site:tiktok.com …`) | implementada; extrai @user, URL de vídeo e o trecho como evidência |
-| Busca pública do TikTok / página de hashtag | implementada em *best effort* (o TikTok costuma exigir JS/login) |
-| Perfil/vídeo do TikTok (bio, link, vídeos, legenda) | página pública (JSON embutido), oEmbed e, se instalado, `yt-dlp` |
-| Importação (TXT/CSV/colar), evidência manual, links de busca manuais (Google etc.) | sempre disponíveis |
+| Busca via DuckDuckGo / Bing (`site:tiktok.com …`) | @user, URL de vídeo e trecho como evidência |
+| Busca pública do TikTok / página de hashtag | JSON público da página |
+| Perfil/vídeo do TikTok (bio, link, vídeos, legenda) | página pública, oEmbed e `yt-dlp` quando instalado |
+| Importação (TXT/CSV/colar), evidência manual, links de busca manuais | sempre disponíveis |
 
-**As fontes automáticas dependem de rede aberta e podem ser bloqueadas, mudar de layout ou exigir captcha.** Quando isso ocorre o erro aparece em **LOG** e a ferramenta segue funcionando pelos fallbacks manuais.
-O sandbox de desenvolvimento **não tinha acesso** a TikTok/DuckDuckGo/Bing: os coletores foram testados contra HTML *simulado*, não contra os sites reais — valide-os na sua máquina antes de depender deles (o intervalo entre consultas é configurável). Não há burla de login/captcha; use dentro dos termos das plataformas e da lei aplicável.
+Fontes podem ser bloqueadas, mudar de layout ou exigir captcha: o erro vai para o LOG e as demais seguem. Use dentro dos termos das plataformas e da lei aplicável.
+
 **Análise visual (opcional)**: quando há thumbnail, `VISUAL_ANALYSIS` usa a API multimodal (defina `ANTHROPIC_API_KEY`; modelo em `BETHUNTER_VISION_MODEL`) ou, se houver `tesseract` instalado, OCR leve. Sem nenhum dos dois o resultado é `não disponível` e o candidato segue normalmente; tags manuais (gameplay/logomarca/saque) aparecem como `manual`.
 
 ## Estrutura
@@ -81,6 +97,7 @@ O sandbox de desenvolvimento **não tinha acesso** a TikTok/DuckDuckGo/Bing: os 
 run.py                     # servidor local
 bethunter/config.py        # padrões: pesos, limites, léxicos, jogos, caças
 bethunter/db.py            # SQLite (esquema, configurações)
+bethunter/envcheck.py      # STATUS DO AMBIENTE / TESTAR AMBIENTE
 bethunter/urltools.py      # parâmetros de afiliado, cadeia de redirecionamento, agregadores
 bethunter/extract.py       # extração de sinais do texto
 bethunter/scoring.py       # score explicável + classificador de falso positivo

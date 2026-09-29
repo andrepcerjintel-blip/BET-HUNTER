@@ -1,0 +1,2 @@
+# Opcional: coleta complementar de vídeos por perfil. A aplicação funciona sem isto.
+yt-dlp

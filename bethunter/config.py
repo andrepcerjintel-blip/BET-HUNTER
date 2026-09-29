@@ -15,6 +15,9 @@ DEFAULT_SETTINGS = {
     "cache_days": 7,
     "auto_discard_low": False,     # padrão: BAIXA RELEVÂNCIA fica como BAIXA RELEVÂNCIA (oculta da revisão, nunca apaga)
     "request_delay": 1.2,          # segundos entre consultas externas (educação com as fontes)
+    "http_timeout": 12,            # segundos por requisição externa
+    "http_max_retries": 2,         # novas tentativas só em falha de conexão/timeout
+    "http_min_interval": 0.7,      # intervalo mínimo entre requisições (1 por vez, sem paralelismo)
     "resolve_links": True,
     "max_links_per_candidate": 6,
     "aggregator_max_links": 10,

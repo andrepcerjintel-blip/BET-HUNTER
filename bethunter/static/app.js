@@ -222,7 +222,7 @@ async function showDetail(id, host) {
       <div>BIO</div><div>${esc(d.bio || NI)}</div><div>LINK_BIO</div><div>${esc(d.bio_link || NI)}</div><div>PLATAFORMA</div><div>${esc((d.platforms || []).join(', ') || NI)}</div>
       <div>JOGO</div><div>${esc((d.games || []).join(', ') || NI)}</div><div>CÓDIGO PROMO</div><div>${esc((d.codes || []).join(', ') || NI)}</div><div>AFFILIATE_ID</div><div>${esc((d.affiliate_ids || []).join(', ') || NI)}</div>
       <div>HASHTAGS</div><div>${esc((d.hashtags || []).map(h => '#' + h).join(' ') || NI)}</div><div>FONTES</div><div>${esc((d.sources || []).join(', ') || NI)}</div>
-      <div>VISUAL_ANALYSIS</div><div>${esc(d.visual_analysis || 'não disponível')}${(d.visuals || []).map(v => `<div class="mut">${esc(v.engine)}: ${Object.entries(v.signals).filter(([, x]) => x).map(([k, x]) => k + (x === true ? '' : '=' + x)).join(', ') || 'sem sinais'}</div>`).join('')}</div><div>STATUS PERFIL</div><div>${esc(d.profile_status)}</div><div>1ª COLETA</div><div>${esc(fmtDate(d.first_seen))}</div></div>
+      <div>VISUAL_ANALYSIS</div><div>${esc((d.visual_analysis || 'não disponível').toUpperCase())}${(d.visuals || []).map(v => `<div class="mut">${esc(v.engine)}: ${Object.entries(v.signals).filter(([, x]) => x).map(([k, x]) => k + (x === true ? '' : '=' + x)).join(', ') || 'sem sinais'}</div>`).join('')}</div><div>STATUS PERFIL</div><div>${esc(d.profile_status)}</div><div>1ª COLETA</div><div>${esc(fmtDate(d.first_seen))}</div></div>
      <h3>Recursivo — transformar indicador em busca</h3><div>${d.indicators.map(x => `<button class="sm" onclick="searchInd(${jq(x.tipo)},${jq(x.valor)})">BUSCAR ${esc(x.tipo.toUpperCase())}: ${esc(clip(x.valor, 30))}</button> `).join('') || '<span class="mut">sem indicadores</span>'}</div>
      <h3>Clusters</h3><div>${d.clusters.map(c => `<button class="sm" onclick="closeModals();S.filters={cluster:${jq(c.tipo + ':' + c.valor)}};setView('results')">${esc(c.tipo)}: ${esc(c.valor)}</button> `).join('') || '<span class="mut">—</span>'}</div>
      <h3>Observação do analista</h3><textarea id="dNote" placeholder="OBSERVAÇÃO_ANALISTA (preservada nas exportações)">${esc(d.analyst_note)}</textarea>
@@ -474,15 +474,34 @@ async function renderLog() {
   $('#view').innerHTML = `<h2>LOG DE PESQUISAS</h2><div class="tblwrap"><table><thead><tr><th>Horário</th><th>Caça/origem</th><th>Consulta</th><th>Fonte</th><th>Encontrados</th><th>Novos</th><th>Duplicados</th><th>Erros</th><th>Tempo</th></tr></thead><tbody>${l.map(r => `<tr><td>${esc(fmtDate(r.ts))}</td><td>${esc(r.hunt)}</td><td>${esc(r.query)}</td><td>${esc(r.source)}</td><td>${r.found}</td><td>${r.new}</td><td>${r.dups}</td><td class="${r.errors ? 'neg' : ''}">${r.errors ? '⚠ ' + esc(r.error_msg) : '0'}</td><td>${r.duration_ms} ms</td></tr>`).join('') || '<tr><td colspan="9" class="mut">Nenhuma pesquisa executada.</td></tr>'}</tbody></table></div>`;
 }
 
+/* ------------------------------------------------------------ ambiente */
+const ENV_ORDER = ['INTERNET', 'DUCKDUCKGO', 'BING', 'TIKTOK', 'YT-DLP', 'ANTHROPIC', 'TESSERACT', 'BANCO', 'VISUAL_ANALYSIS'];
+function envHtml(st) {
+  const cls = e => ['OK', 'INSTALADO', 'CONFIGURADO', 'DISPONÍVEL'].includes(e) ? 'pos' : (['ERRO', 'BLOQUEADO'].includes(e) ? 'neg' : 'mut');
+  return `<div class="kv" style="grid-template-columns:170px 150px 1fr">${ENV_ORDER.filter(k => st[k]).map(k => `<div>${k}</div><div><b class="${cls(st[k].estado)}">${esc(st[k].estado)}</b></div><div class="mut">${esc(st[k].detalhe || '')}</div>`).join('')}</div>`;
+}
+async function openEnv() {
+  const m = modal(`<h2>STATUS DO AMBIENTE</h2><p class="mut">Testes rápidos. Estado negativo não impede o uso: a ferramenta segue com as demais fontes, importação e evidência manual.</p><div id="envOut">${envHtml(await api('/api/env'))}</div>
+    <div class="filters" style="margin-top:8px"><button class="primary" id="envGo">TESTAR AMBIENTE</button><span class="mut" id="envMsg"></span></div>`, 'sm');
+  $('#envGo', m).onclick = async () => {
+    $('#envGo', m).disabled = true; $('#envMsg', m).textContent = 'testando (até ~10 s)…';
+    try { $('#envOut', m).innerHTML = envHtml(await api('/api/env/test', {method: 'POST', json: {}})); $('#envMsg', m).textContent = 'concluído'; }
+    catch (e) { $('#envMsg', m).textContent = '⚠ ' + e.message; }
+    $('#envGo', m).disabled = false;
+  };
+}
+
 /* ------------------------------------------------------------ config */
 const WLABEL = {link_bet:'link externo (aposta)',cta:'CTA explícito',gameplay:'vídeo de jogo',platform:'nome/logo plataforma',payment:'saque/pagamento',aff_link:'parâmetro de afiliado',bonus_code:'bônus/cupom/código',group:'grupo Telegram/WhatsApp',shared_domain:'domínio compartilhado',hashtag:'hashtag relacionada',expressions:'expressões (horário pagante…)',recurrence:'recorrência',padrao_recorrente:'padrão promocional recorrente',r_journalism:'redutor jornalismo',r_critica:'redutor crítica',r_institutional:'redutor institucional',r_legal:'redutor jurídico',r_educ:'redutor educativo/prevenção',r_legislation:'redutor legislação',r_comment:'redutor comentário',r_incidental:'redutor uso incidental'};
 async function renderConfig() {
   const s = S.settings = await api('/api/settings');
   const ta = (id, arr, h) => `<h3>${h}</h3><textarea id="${id}" style="min-height:110px">${esc(arr.join('\n'))}</textarea>`;
-  $('#view').innerHTML = `<h2>CONFIGURAÇÕES</h2><p class="mut">Tudo é editável sem mexer no código. Para aplicar novos pesos/limites aos itens já coletados, use “SALVAR E REANALISAR TUDO” (status definidos manualmente são preservados).</p>
+  const envSt = await api('/api/env');
+  $('#view').innerHTML = `<h2>STATUS DO AMBIENTE</h2><div class="box">${envHtml(envSt)}<button class="sm" onclick="openEnv()">TESTAR AMBIENTE</button></div><h2>CONFIGURAÇÕES</h2><p class="mut">Tudo é editável sem mexer no código. Para aplicar novos pesos/limites aos itens já coletados, use “SALVAR E REANALISAR TUDO” (status definidos manualmente são preservados).</p>
    <h3>Limites de classificação</h3><div class="filters">ALTA PROBABILIDADE ≥ <input id="tAlta" type="number" value="${s.thresholds.alta}" style="width:70px"> REVISAR ≥ <input id="tRev" type="number" value="${s.thresholds.revisar}" style="width:70px"> (abaixo: BAIXA RELEVÂNCIA)</div>
    <h3>Pesos do score</h3><div class="wgrid">${Object.keys(s.weights).map(k => `<label>${WLABEL[k] || k}<input type="number" data-w="${k}" value="${s.weights[k]}"></label>`).join('')}</div>
    <h3>Operação</h3><div class="filters">Meta <input id="cGoal" type="number" value="${s.goal}" style="width:80px"> Cache (dias) <input id="cCache" type="number" value="${s.cache_days}" style="width:60px"> Intervalo entre consultas (s) <input id="cDelay" type="number" step="0.1" value="${s.request_delay}" style="width:70px"> Máx. perfis enriquecidos por busca <input id="cEnr" type="number" value="${s.enrich_max}" style="width:70px"></div>
+   <div class="filters">Timeout por requisição (s) <input id="cTo" type="number" value="${s.http_timeout}" style="width:60px"> Tentativas extras <input id="cRt" type="number" min="0" max="5" value="${s.http_max_retries}" style="width:55px"> Intervalo mínimo entre requisições (s) <input id="cMi" type="number" step="0.1" value="${s.http_min_interval}" style="width:65px"></div>
    <div class="filters"><label class="i"><input type="checkbox" id="cAuto" ${s.auto_discard_low ? 'checked' : ''}>marcar BAIXA RELEVÂNCIA como DESCARTADO automaticamente (padrão: desligado; nunca apaga)</label><label class="i"><input type="checkbox" id="cRes" ${s.resolve_links ? 'checked' : ''}>resolver redirecionamentos de links</label><label class="i"><input type="checkbox" id="cEnrich" ${s.enrich_after_search ? 'checked' : ''}>coletar perfil dos novos após buscas</label></div>
    <div class="grid2"><div>${ta('cGames', s.games, 'Jogos (um por linha; apelidos com “|”)')}${ta('cHash', s.hashtags, 'Hashtags de descoberta')}</div>
    <div>${ta('cPlat', s.platforms, 'Plataformas (Nome|dominio1,dominio2)')}${ta('cDom', s.bet_domains, 'Domínios de apostas conhecidos')}</div></div>
@@ -495,7 +514,7 @@ async function saveConfig(re) {
   const w = {}; document.querySelectorAll('[data-w]').forEach(i => w[i.dataset.w] = +i.value);
   let lex; try { lex = JSON.parse($('#cLex').value || '{}'); } catch (e) { return toast('JSON dos léxicos inválido'); }
   const body = {weights: w, thresholds: {alta: +$('#tAlta').value, revisar: +$('#tRev').value}, goal: +$('#cGoal').value, cache_days: +$('#cCache').value,
-    request_delay: +$('#cDelay').value, enrich_max: +$('#cEnr').value, auto_discard_low: $('#cAuto').checked, resolve_links: $('#cRes').checked, enrich_after_search: $('#cEnrich').checked,
+    request_delay: +$('#cDelay').value, enrich_max: +$('#cEnr').value, http_timeout: +$('#cTo').value, http_max_retries: +$('#cRt').value, http_min_interval: +$('#cMi').value, auto_discard_low: $('#cAuto').checked, resolve_links: $('#cRes').checked, enrich_after_search: $('#cEnrich').checked,
     games: lines($('#cGames').value), hashtags: lines($('#cHash').value).map(h => h.replace(/^#/, '')), platforms: lines($('#cPlat').value), bet_domains: lines($('#cDom').value),
     aggregators: lines($('#cAgg').value), generic_games: lines($('#cGen').value), lexicons: lex,
     matrix: {A: lines($('#mxA').value), B: lines($('#mxB').value), C: lines($('#mxC').value), D: lines($('#mxD').value)}};

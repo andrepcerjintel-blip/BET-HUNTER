@@ -3,6 +3,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import re
 import threading
 import time
@@ -17,6 +18,7 @@ from .util import (NAO_IDENTIFICADO, base_domain, canonical_video_url, clip, ext
 STATUSES = ["NOVO", "REVISAR", "CONFIRMADO", "DESCARTADO", "BAIXA RELEVÂNCIA", "DUPLICADO", "PERFIL INDISPONÍVEL",
             "CONTEÚDO REMOVIDO", "JÁ ENCAMINHADO"]
 UNRESOLVED = "não resolvido"
+log = logging.getLogger("bethunter")
 INACTIVE = ("DESCARTADO", "BAIXA RELEVÂNCIA", "DUPLICADO", "PERFIL INDISPONÍVEL", "CONTEÚDO REMOVIDO")
 ORIGIN_LABELS = {"domínio": "domínio", "código": "link de afiliado", "hashtag": "hashtag", "plataforma": "menção"}
 
@@ -395,8 +397,9 @@ def run_query(q, source, settings, hunt="", origin=None):
     t0 = time.time()
     try:
         hits, err, _ = sources.run_source(source, q)
-    except Exception as e:  # fonte nunca derruba a ferramenta
-        hits, err = [], f"{type(e).__name__}: {e}"
+    except Exception as e:  # fonte nunca derruba a ferramenta; detalhe técnico só no arquivo de log
+        log.exception("FONTE=%s | CONSULTA=%s | falha inesperada", source, q)
+        hits, err = [], f"erro interno na fonte ({type(e).__name__}) — detalhes em logs/bethunter.log"
     resolved = {}
     if hits:
         try:
@@ -406,8 +409,11 @@ def run_query(q, source, settings, hunt="", origin=None):
             only = {u for h in fresh if promising_text(h["text"], settings) for u in extract_urls(h["text"])}
             resolved = resolve_urls(_ingest_urls(fresh), settings, only=only)
         except Exception as e:
-            err = (err or "") + f" (resolução de URLs: {e})"
+            log.exception("CONSULTA=%s | falha na resolução de URLs", q)
+            err = (err or "") + f" (resolução de URLs: {type(e).__name__})"
     label = origin or sources.SOURCE_LABELS.get(source, source)
+    if err:
+        log.warning("FONTE=%s | CONSULTA=%s | ERRO=%s", sources.SOURCE_LABELS.get(source, source), q, err)
     with db.connect() as conn:
         st = ingest_hits(conn, hits, settings, hunt=hunt, origin=label, resolved=resolved) if hits else \
             {"found": 0, "new": 0, "dups": 0, "new_ids": [], "ids": set()}
@@ -691,8 +697,9 @@ def enrich(ids, settings, job=None):
             res = investigate(r["username"], force=True, source=None)
             n += 1 if res.get("profile_fetched") else 0
         except Exception as e:
+            log.exception("enriquecer @%s", r["username"])
             if job:
-                job.log(f"enriquecer @{r['username']}: {e}")
+                job.log(f"enriquecer @{r['username']}: falhou ({type(e).__name__})")
         if job:
             job.log(f"perfil coletado: @{r['username']}")
         time.sleep(settings.get("request_delay", 0))
@@ -862,7 +869,8 @@ def start_job(label, fn, sync=False):
             job.result = fn(job)
             job.status = "done"
         except Exception as e:  # noqa
-            job.status, job.error = "error", f"{type(e).__name__}: {e}"
+            log.exception("job '%s' falhou", label)
+            job.status, job.error = "error", f"{type(e).__name__}: {str(e)[:150]} (detalhes em logs/bethunter.log)"
 
     if sync:
         runner()

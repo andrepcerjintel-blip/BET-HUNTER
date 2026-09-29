@@ -4,7 +4,8 @@ import os
 
 from flask import Flask, Response, jsonify, render_template, request
 
-from . import db, exporter, mission, pipeline, queries, sources, visual
+from . import db, envcheck, exporter, mission, net, pipeline, queries, sources, visual
+from .util import export_dir, setup_logging
 from .db import jl
 
 FILTER_KEYS = ["view", "min_score", "status", "classification", "platform", "domain", "game", "hashtag", "ev_type",
@@ -15,6 +16,10 @@ def create_app(db_path=None):
     if db_path:
         os.environ["BETHUNTER_DB"] = db_path
     db.init_db()
+    setup_logging()
+    with db.connect() as c:
+        _s = db.get_settings(c)
+    net.configure(_s["http_timeout"], _s["http_max_retries"], _s["http_min_interval"])
     app = Flask(__name__)
     app.config["JSON_AS_ASCII"] = False
     app.json.ensure_ascii = False
@@ -29,7 +34,10 @@ def create_app(db_path=None):
     @app.errorhandler(Exception)
     def err(e):
         code = getattr(e, "code", 500) if hasattr(e, "code") and isinstance(getattr(e, "code"), int) else 500
-        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), code
+        if code >= 500:
+            setup_logging().exception("erro em %s", request.path)
+        return jsonify({"ok": False, "error": (f"{type(e).__name__}: {str(e)[:160]}" if code < 500 else
+                                               "erro interno (detalhes em logs/bethunter.log)")}), code
 
     @app.get("/favicon.ico")
     def favicon():
@@ -351,8 +359,17 @@ def create_app(db_path=None):
     def api_settings_put():
         with db.connect() as c:
             s = db.save_settings(c, body())
+            net.configure(s["http_timeout"], s["http_max_retries"], s["http_min_interval"])
             n = pipeline.refresh_all(c, s) if request.args.get("reanalyze") == "1" else 0
         return jsonify({"ok": True, "settings": s, "reanalisados": n})
+
+    @app.get("/api/env")
+    def api_env():
+        return jsonify(envcheck.static_status())
+
+    @app.post("/api/env/test")
+    def api_env_test():
+        return jsonify(envcheck.test_all())
 
     @app.get("/api/facets")
     def api_facets():
@@ -376,7 +393,16 @@ def create_app(db_path=None):
             data, mime, name = exporter.export(c, filters(), fmt=request.args.get("format", "csv"),
                                                kind=request.args.get("kind", "simple"),
                                                scope=request.args.get("scope", "confirmed"))
-        return Response(data, mimetype=mime, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+        saved = ""
+        try:  # cópia local em exportacoes/ (além do download do navegador)
+            os.makedirs(export_dir(), exist_ok=True)
+            with open(os.path.join(export_dir(), name), "wb") as fh:
+                fh.write(data)
+            saved = os.path.join(export_dir(), name)
+        except OSError:
+            pass
+        return Response(data, mimetype=mime, headers={"Content-Disposition": f'attachment; filename="{name}"',
+                                                     "X-Saved-To": saved.encode("ascii", "replace").decode()})
 
     @app.get("/api/copy")
     def api_copy():

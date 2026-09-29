@@ -1,7 +1,10 @@
 """Camada HTTP única (facilita testes e controle). Nunca levanta exceção: devolve dict com `error`."""
 import ipaddress
+import logging
 import os
 import socket
+import threading
+import time
 from urllib.parse import urlparse
 
 import requests
@@ -25,8 +28,62 @@ def _public_host(host):
     return True
 
 
-def fetch(url, method="GET", allow_redirects=False, timeout=10, headers=None, max_bytes=400_000, params=None):
-    """-> {'status': int|None, 'url': str, 'location': str|None, 'text': str, 'error': str|None}"""
+CFG = {"timeout": 12, "max_retries": 2, "min_interval": 0.7}
+_lock = threading.Lock()
+_last = [0.0]
+log = logging.getLogger("bethunter.net")
+
+
+def configure(timeout=None, max_retries=None, min_interval=None):
+    """Aplica limites (vindos das configurações). Valores inválidos são ignorados."""
+    for k, v in (("timeout", timeout), ("max_retries", max_retries), ("min_interval", min_interval)):
+        if v is not None:
+            try:
+                CFG[k] = max(0, float(v)) if k != "max_retries" else max(0, min(int(v), 5))
+            except (TypeError, ValueError):
+                pass
+
+
+def _throttle():
+    """Limite conservador: uma requisição externa por vez, com intervalo mínimo entre elas."""
+    with _lock:
+        wait = CFG["min_interval"] - (time.time() - _last[0])
+        if wait > 0:
+            time.sleep(wait)
+        _last[0] = time.time()
+
+
+def short_error(e):
+    if isinstance(e, requests.Timeout):
+        return "tempo esgotado"
+    if isinstance(e, requests.ConnectionError):
+        return "falha de conexão (sem internet, DNS, proxy ou bloqueio de rede)"
+    return f"erro de rede ({type(e).__name__})"
+
+
+def _request(method, url, timeout, throttle, **kw):
+    """requests com timeout e até CFG['max_retries'] novas tentativas (só para falha de conexão/timeout)."""
+    attempts = 1 + int(CFG["max_retries"])
+    last = None
+    for n in range(attempts):
+        if throttle:
+            _throttle()
+        try:
+            return requests.request(method, url, timeout=(min(timeout, 6), timeout), **kw), None
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last = e
+            log.warning("tentativa %d/%d falhou: %s %s | %s", n + 1, attempts, method, url, e)
+            if n + 1 < attempts:
+                time.sleep(min(1.0 * (n + 1), 3))
+        except requests.RequestException as e:
+            return None, e
+    return None, last
+
+
+def fetch(url, method="GET", allow_redirects=False, timeout=None, headers=None, max_bytes=400_000, params=None,
+          throttle=True):
+    """-> {'status': int|None, 'url': str, 'location': str|None, 'text': str, 'error': str|None}. Nunca levanta exceção."""
+    timeout = timeout or CFG["timeout"]
     out = {"status": None, "url": url, "location": None, "text": "", "error": None}
     p = urlparse(url)
     if p.scheme not in ("http", "https") or not p.hostname:
@@ -35,42 +92,48 @@ def fetch(url, method="GET", allow_redirects=False, timeout=10, headers=None, ma
     if not _public_host(p.hostname):
         out["error"] = "host privado bloqueado"
         return out
+    h = dict(HEADERS)
+    h.update(headers or {})
+    r, err = _request(method, url, timeout, throttle, headers=h, allow_redirects=allow_redirects, stream=True, params=params)
+    if r is None:
+        out["error"] = short_error(err)
+        return out
     try:
-        h = dict(HEADERS)
-        h.update(headers or {})
-        r = requests.request(method, url, headers=h, timeout=timeout, allow_redirects=allow_redirects,
-                             stream=True, params=params)
         out["status"] = r.status_code
         out["url"] = r.url
         out["location"] = r.headers.get("Location")
         if method != "HEAD":
-            raw = b""
+            raw, t0 = b"", time.time()
             for chunk in r.iter_content(16384):
                 raw += chunk
-                if len(raw) >= max_bytes:
+                if len(raw) >= max_bytes or time.time() - t0 > timeout * 2:
                     break
-            r.close()
-            enc = r.encoding or "utf-8"
-            out["text"] = raw.decode(enc, errors="replace")
+            out["text"] = raw.decode(r.encoding or "utf-8", errors="replace")
     except requests.RequestException as e:
-        out["error"] = f"{type(e).__name__}: {str(e)[:160]}"
+        log.warning("leitura interrompida: %s | %s", url, e)
+        out["error"] = short_error(e)
+    finally:
+        r.close()
     return out
 
 
-def fetch_bytes(url, max_bytes=800_000, timeout=12):
+def fetch_bytes(url, max_bytes=800_000, timeout=None):
     """Baixa binário (thumbnail). -> bytes | None. Mesmas proteções de fetch()."""
+    timeout = timeout or CFG["timeout"]
     p = urlparse(url)
     if p.scheme not in ("http", "https") or not p.hostname or not _public_host(p.hostname):
         return None
+    r, _ = _request("GET", url, timeout, True, headers=HEADERS, stream=True)
+    if r is None or r.status_code != 200:
+        return None
     try:
-        r = requests.get(url, headers=HEADERS, timeout=timeout, stream=True)
-        if r.status_code != 200:
-            return None
-        raw = b""
+        raw, t0 = b"", time.time()
         for chunk in r.iter_content(16384):
             raw += chunk
-            if len(raw) > max_bytes:
+            if len(raw) > max_bytes or time.time() - t0 > timeout * 2:
                 return None
         return raw
     except requests.RequestException:
         return None
+    finally:
+        r.close()

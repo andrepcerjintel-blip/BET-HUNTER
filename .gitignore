@@ -4,3 +4,7 @@ data/*.db
 data/*.db-*
 .pytest_cache/
 .venv/
+
+.env
+logs/
+exportacoes/

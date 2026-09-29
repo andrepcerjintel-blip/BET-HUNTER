@@ -83,7 +83,7 @@ def build_rows(conn, f, scope="confirmed", kind="simple"):
                 "AFFILIATE_ID": _v(_join(d["affiliate_ids"])), "SCORE": d["score"], "CLASSIFICACAO": d["classification"],
                 "TIPO": d["content_type"], "MOTIVO_SCORE": _v(motivo), "EVIDENCIA": _v(d["main_evidence"]),
                 "FONTE_DESCOBERTA": _v(_join(d["sources"])), "STATUS_VALIDACAO": d["status"],
-                "VISUAL_ANALYSIS": d.get("visual_analysis") or "não disponível",
+                "VISUAL_ANALYSIS": (d.get("visual_analysis") or "não disponível").upper(),
                 "PADRAO_PROMOCIONAL_RECORRENTE": "SIM" if d["recurring"] else "NÃO",
                 "OBSERVACAO_ANALISTA": d["analyst_note"] or "", "QTD_EVIDENCIAS": d["evidence_count"],
                 "FONTE_CONSULTADA": _v(first.get("source")), "URL_FONTE_CONSULTADA": _v(first.get("source_url"))})

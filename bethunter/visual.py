@@ -24,10 +24,25 @@ PROMPT = ("Analise esta miniatura/frame de um vídeo. Responda APENAS um JSON co
 _warned = {"done": False}
 
 
+def api_key():
+    """Chave só via variável de ambiente (ou .env carregado no ambiente). Nunca é gravada no banco/código."""
+    return (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+
+
+def tesseract_path():
+    exe = shutil.which("tesseract")
+    if exe:
+        return exe
+    for p in (r"C:\Program Files\Tesseract-OCR\tesseract.exe", r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
 def engine():
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    if api_key():
         return "multimodal"
-    if shutil.which("tesseract"):
+    if tesseract_path():
         return "ocr"
     return None
 
@@ -55,7 +70,7 @@ def analyze_multimodal(img):
         return None
     try:
         r = requests.post("https://api.anthropic.com/v1/messages", timeout=60, headers={
-            "x-api-key": os.environ["ANTHROPIC_API_KEY"], "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            "x-api-key": api_key(), "anthropic-version": "2023-06-01", "content-type": "application/json"},
             json={"model": os.environ.get("BETHUNTER_VISION_MODEL", "claude-haiku-4-5-20251001"), "max_tokens": 400,
                   "messages": [{"role": "user", "content": [
                       {"type": "image", "source": {"type": "base64", "media_type": mt, "data": base64.b64encode(img).decode()}},
@@ -70,7 +85,7 @@ def analyze_multimodal(img):
 
 
 def analyze_ocr(img):
-    exe = shutil.which("tesseract")
+    exe = tesseract_path()
     if not exe:
         return None
     text = ""
@@ -103,7 +118,7 @@ def analyze_image(img):
         r = analyze_multimodal(img)
         if r:
             return r
-    if shutil.which("tesseract"):
+    if tesseract_path():
         return analyze_ocr(img)
     return None
 

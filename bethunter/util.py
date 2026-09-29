@@ -1,4 +1,7 @@
 """Utilitários: normalização de texto, datas, URLs e usernames."""
+import logging
+import logging.handlers
+import os
 import re
 import time
 import unicodedata
@@ -186,3 +189,53 @@ def base_domain(host):
 def clip(s, n):
     s = re.sub(r"\s+", " ", s or "").strip()
     return s if len(s) <= n else s[: n - 1] + "…"
+
+
+# ------------------------------------------------------------------ caminhos, .env e log em arquivo
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def log_dir():
+    return os.environ.get("BETHUNTER_LOG_DIR") or os.path.join(ROOT, "logs")
+
+
+def export_dir():
+    return os.environ.get("BETHUNTER_EXPORT_DIR") or os.path.join(ROOT, "exportacoes")
+
+
+def load_dotenv(path=None):
+    """Lê .env simples (CHAVE=valor). Não sobrescreve variáveis já definidas e ignora valores vazios."""
+    path = path or os.path.join(ROOT, ".env")
+    if not os.path.isfile(path):
+        return False
+    with open(path, encoding="utf-8-sig") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if k and v and k not in os.environ:
+                os.environ[k] = v
+    return True
+
+
+def setup_logging():
+    """Log técnico em logs/bethunter.log (rotativo). Detalhes/stack trace só aqui; a interface mostra mensagens curtas."""
+    lg = logging.getLogger("bethunter")
+    lg.setLevel(logging.INFO)
+    lg.propagate = False
+    target = os.path.join(log_dir(), "bethunter.log")
+    for h in list(lg.handlers):
+        if getattr(h, "baseFilename", None) != os.path.abspath(target):
+            lg.removeHandler(h)
+            h.close()
+    if not lg.handlers:
+        try:
+            os.makedirs(log_dir(), exist_ok=True)
+            h = logging.handlers.RotatingFileHandler(target, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+            h.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+            lg.addHandler(h)
+        except OSError:
+            lg.addHandler(logging.NullHandler())   # sem permissão de escrita: segue sem log em arquivo
+    return lg

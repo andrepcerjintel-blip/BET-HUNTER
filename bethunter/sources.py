@@ -1,9 +1,11 @@
 """Fontes de descoberta/coleta. Toda fonte pode falhar (bloqueio, JS, captcha): nesse caso devolve
 erro registrado e o restante da ferramenta segue funcionando (importação manual, evidência manual...)."""
+import importlib.util
 import json
 import re
 import shutil
 import subprocess
+import sys
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 from bs4 import BeautifulSoup
@@ -13,6 +15,17 @@ from .util import (canonical_video_url, clip, extract_hashtags, extract_mentions
 
 SOURCE_LABELS = {"ddg": "DuckDuckGo", "bing": "Bing", "tiktok": "TikTok Search", "tiktok_tag": "TikTok Hashtag"}
 SEARCH_SOURCES = ["ddg", "bing", "tiktok"]
+
+
+BLOCK_RX = re.compile(r"(captcha|unusual traffic|verify you are human|are you a robot|anomaly|access denied|"
+                      r"confirm you.re not a robot)", re.I)
+
+
+def http_error(status):
+    """Mensagem curta para status HTTP; bloqueios são registrados, nunca contornados."""
+    if status in (202, 403, 429):
+        return f"HTTP {status} (bloqueio ou limite de requisições da fonte)"
+    return f"HTTP {status}"
 
 
 def _hit(url, text, source, query, source_url):
@@ -43,7 +56,7 @@ def search_ddg(q):
     if r["error"]:
         return [], r["error"], src_url
     if r["status"] != 200:
-        return [], f"HTTP {r['status']}", src_url
+        return [], http_error(r["status"]), src_url
     soup = BeautifulSoup(r["text"], "html.parser")
     hits = []
     for res in soup.select(".result, .web-result"):
@@ -56,7 +69,7 @@ def search_ddg(q):
         h = _hit(target, text, "DuckDuckGo", q, src_url)
         if h:
             hits.append(h)
-    if not hits and re.search(r"(anomaly|captcha|unusual traffic)", r["text"][:5000], re.I):
+    if not hits and BLOCK_RX.search(r["text"][:8000]):
         return [], "bloqueado por captcha/anti-bot", src_url
     return hits, None, src_url
 
@@ -69,7 +82,7 @@ def search_bing(q):
     if r["error"]:
         return [], r["error"], src_url
     if r["status"] != 200:
-        return [], f"HTTP {r['status']}", src_url
+        return [], http_error(r["status"]), src_url
     soup = BeautifulSoup(r["text"], "html.parser")
     hits = []
     for li in soup.select("li.b_algo"):
@@ -81,6 +94,8 @@ def search_bing(q):
         h = _hit(a.get("href", ""), text, "Bing", q, src_url)
         if h:
             hits.append(h)
+    if not hits and BLOCK_RX.search(r["text"][:8000]):
+        return [], "bloqueado por captcha/anti-bot", src_url
     return hits, None, src_url
 
 
@@ -104,7 +119,7 @@ def search_tiktok(q, tag=False):
     if r["error"]:
         return [], r["error"], url
     if r["status"] != 200:
-        return [], f"HTTP {r['status']}", url
+        return [], http_error(r["status"]), url
     scope = _rehydration(r["text"])
     hits = []
     if scope:
@@ -182,7 +197,7 @@ def fetch_profile(username, max_videos=12):
     elif r["status"] == 404:
         out["unavailable"], out["error"] = True, "perfil não encontrado (404)"
     elif r["status"] != 200:
-        out["error"] = f"HTTP {r['status']}"
+        out["error"] = http_error(r["status"])
     else:
         scope = _rehydration(r["text"])
         detail = (scope or {}).get("webapp.user-detail")
@@ -206,14 +221,24 @@ def fetch_profile(username, max_videos=12):
     return out
 
 
+def ytdlp_cmd():
+    """Comando do yt-dlp (executável no PATH ou módulo Python) ou None se não estiver instalado."""
+    exe = shutil.which("yt-dlp")
+    if exe:
+        return [exe]
+    if importlib.util.find_spec("yt_dlp"):
+        return [sys.executable, "-m", "yt_dlp"]
+    return None
+
+
 def ytdlp_videos(username, n=12):
     """Opcional: se yt-dlp estiver instalado, lista vídeos públicos do perfil (metadados apenas)."""
-    exe = shutil.which("yt-dlp")
-    if not exe:
+    cmd = ytdlp_cmd()
+    if not cmd:
         return []
     try:
-        p = subprocess.run([exe, "-J", "--flat-playlist", "--playlist-end", str(n), profile_url(username)],
-                           capture_output=True, text=True, timeout=60)
+        p = subprocess.run([*cmd, "-J", "--flat-playlist", "--playlist-end", str(n), profile_url(username)],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         data = json.loads(p.stdout or "{}")
     except (subprocess.SubprocessError, ValueError, OSError):
         return []
