@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS visuals(
 );
 """
 
-MIGRATIONS = [("candidates", "visual_analysis", "TEXT DEFAULT 'não disponível'")]
+MIGRATIONS = [("candidates", "visual_analysis", "TEXT DEFAULT 'não disponível'"),
+              ("evidences", "meta", "TEXT DEFAULT '{}'")]   # meta: origem/termo/país/intervalo/ad_id/payload bruto
 
 
 def _path():
@@ -115,14 +116,19 @@ def init_db(path=None):
             # regra antiga (auto-descartar) -> nova: BAIXA RELEVÂNCIA sem decisão do analista
             c.execute("UPDATE candidates SET status='BAIXA RELEVÂNCIA' WHERE status='DESCARTADO' AND status_manual=0")
             c.execute("INSERT INTO settings(key,value) VALUES('migrated_v2','1')")
-        if not c.execute("SELECT 1 FROM hunts WHERE kind='matrix'").fetchone() and c.execute("SELECT 1 FROM hunts LIMIT 1").fetchone():
-            c.execute("INSERT INTO hunts(name,kind,queries,sources,enabled,position) VALUES(?,?,?,?,1,99)",
-                      (config.DEFAULT_HUNTS[-1][0], "matrix", "[]", json.dumps(config.DEFAULT_HUNT_SOURCES)))
-        if not c.execute("SELECT 1 FROM hunts LIMIT 1").fetchone():
+        if c.execute("SELECT 1 FROM hunts LIMIT 1").fetchone():
+            # bancos existentes: garante as caças novas sem tocar nas que o analista editou
+            for name, kind, _q in config.DEFAULT_HUNTS:
+                if kind in ("matrix", "commercial") and not c.execute("SELECT 1 FROM hunts WHERE kind=?", (kind,)).fetchone():
+                    c.execute("INSERT INTO hunts(name,kind,queries,sources,enabled,position) VALUES(?,?,?,?,1,?)",
+                              (name, kind, "[]", json.dumps(["commercial"] if kind == "commercial" else config.DEFAULT_HUNT_SOURCES),
+                               98 if kind == "commercial" else 99))
+            c.execute("UPDATE hunts SET name=? WHERE kind='matrix' AND name LIKE 'CAÇA 13%'", (config.DEFAULT_HUNTS[-1][0],))
+        else:
             for i, (name, kind, queries) in enumerate(config.DEFAULT_HUNTS):
                 c.execute("INSERT INTO hunts(name,kind,queries,sources,enabled,position) VALUES(?,?,?,?,1,?)",
                           (name, kind, json.dumps(queries, ensure_ascii=False),
-                           json.dumps(config.DEFAULT_HUNT_SOURCES), i))
+                           json.dumps(["commercial"] if kind == "commercial" else config.DEFAULT_HUNT_SOURCES), i))
 
 
 def get_settings(conn):

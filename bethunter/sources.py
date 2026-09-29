@@ -13,7 +13,8 @@ from bs4 import BeautifulSoup
 from . import net
 from .util import (canonical_video_url, clip, extract_hashtags, extract_mentions, parse_tiktok_url, profile_url)
 
-SOURCE_LABELS = {"ddg": "DuckDuckGo", "bing": "Bing", "tiktok": "TikTok Search", "tiktok_tag": "TikTok Hashtag"}
+SOURCE_LABELS = {"ddg": "DuckDuckGo", "bing": "Bing", "tiktok": "TikTok Search", "tiktok_tag": "TikTok Hashtag",
+                 "commercial": "TIKTOK_COMMERCIAL_CONTENT_API"}
 SEARCH_SOURCES = ["ddg", "bing", "tiktok"]
 
 
@@ -159,6 +160,9 @@ def run_source(source, q):
         return search_tiktok(q)
     if source == "tiktok_tag":
         return search_tiktok(q, tag=True)
+    if source == "commercial":       # provider oficial, mesma interface: (hits, erro, url)
+        from . import commercial
+        return commercial.search(q)
     return [], f"fonte desconhecida: {source}", ""
 
 

@@ -103,6 +103,7 @@ def candidate_detail(conn, cid):
         e = dict(e)
         for k in ("hashtags", "mentions", "tags"):
             e[k] = jl(e[k])
+        e["meta"] = jl(e.get("meta"), {})
         e["data"], e["hora"], e["fuso"] = split_iso(e["collected_at"])
         d["evidences"].append(e)
     d["links"] = []

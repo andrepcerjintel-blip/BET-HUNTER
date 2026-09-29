@@ -37,7 +37,13 @@ def analyze(bundle, settings):
         if p:
             reasons.append({"key": key, "pts": p, "label": label, "detail": detail})
 
-    ev = [e for e in bundle["evidences"] if e["kind"] != "relacao"]
+    ev_all = [e for e in bundle["evidences"] if e["kind"] != "relacao"]
+    # evidências da Commercial Content API só indicam ORIGEM (texto padrão + termo): não entram na análise textual
+    commercial_ev = [e for e in ev_all if (e.get("meta") or {}).get("source_type") == "CONTEUDO_COMERCIAL"]
+    ev = [e for e in ev_all if e not in commercial_ev]
+    if commercial_ev:
+        add("origin_commercial", "origem: TikTok Commercial Content API (fonte oficial de anúncios; não indica ilicitude)",
+            f"termo \"{commercial_ev[0]['meta'].get('term', '')}\" · ad.id {commercial_ev[0]['meta'].get('ad_id', '')}")
     links = bundle["links"]
     bio = bundle.get("bio") or ""
     parts = [bundle.get("display_name") or "", bio]
@@ -215,6 +221,8 @@ def analyze(bundle, settings):
             ctype = "DIVULGAÇÃO"
     else:
         ctype = "INDETERMINADO"
+    if commercial_ev and ctype == "INDETERMINADO":
+        ctype = "CONTEÚDO COMERCIAL / ANÚNCIO"   # tipo, não veredito: a confirmação continua sendo do analista
 
     # ---------- evidência principal ----------
     parts = []
@@ -265,7 +273,8 @@ def analyze(bundle, settings):
         "raw": raw, "reasons": reasons, "content_type": ctype, "priority": priority, "recurring": recurring,
         "platforms": plat, "games": ex["games"], "hashtags": ex["hashtags"], "codes": codes,
         "affiliate_ids": aff_ids, "mentions": ex["mentions"], "main_evidence": main,
-        "flags": {"link_bet": link_bet, "cta": cta, "bet_content": bet_ctx, "aff": aff, "gameplay": gameplay},
+        "flags": {"link_bet": link_bet, "cta": cta, "bet_content": bet_ctx, "aff": aff, "gameplay": gameplay,
+                  "commercial_origin": bool(commercial_ev)},
     }
 
 

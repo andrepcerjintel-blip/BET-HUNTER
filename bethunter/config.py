@@ -9,6 +9,7 @@ DEFAULT_SETTINGS = {
         "hashtag": 10, "expressions": 10, "recurrence": 10, "padrao_recorrente": 15,
         "r_journalism": -40, "r_critica": -40, "r_institutional": -35, "r_legal": -30,
         "r_educ": -30, "r_legislation": -25, "r_comment": -20, "r_incidental": -20,
+        "origin_commercial": 20,   # origem: TikTok Commercial Content API (fonte oficial de anúncios; NÃO indica ilicitude)
     },
     "thresholds": {"alta": 70, "revisar": 45},
     "goal": 200,
@@ -85,12 +86,25 @@ DEFAULT_SETTINGS = {
                       "slots", "roleta", "mines", "crash", "plinko"],
     "mission_depth": 2,            # 0..3
     "mission_mode": "rapido",      # rapido | completo
-    "mission_sources": ["ddg", "bing", "tiktok"],
+    "mission_sources": ["ddg", "bing", "tiktok", "commercial"],   # commercial só roda se configurada
     "pool_factor": 2.5,            # a descoberta também para quando o pool qualificado chega a meta*fator
     "derived_per_candidate": 6,
     "derived_max": 400,
     "source_fail_limit": 3,        # falhas seguidas -> fonte pausada na missão (registrado no log)
     "visual_max_per_candidate": 3,
+    # ---- TikTok Commercial Content API (fonte opcional; credenciais SÓ por variável de ambiente)
+    "commercial_api_enabled": True,
+    "commercial_api_country": "BR",
+    "commercial_api_max_pages": 20,
+    "commercial_api_max_count": 20,          # conservador; não assume limite máximo não documentado
+    "commercial_api_fields": "ad.id",        # somente o campo confirmado; outros só se documentados
+    "commercial_api_token_url": "",          # PENDENTE: URL do endpoint de token conforme a documentação oficial
+    "commercial_api_grant_type": "client_credentials",
+    "commercial_api_range": "7d",            # hoje | 24h | 3d | 7d | custom
+    "commercial_api_date_from": "",          # AAAA-MM-DD (com range=custom)
+    "commercial_api_date_to": "",
+    "commercial_api_terms": ["Fortune Tiger", "Tigrinho", "Aviator", "Mines", "Spaceman", "Crash", "Plinko", "slot",
+                             "slots", "cassino"],
     "lexicons": {},  # sobrescreve listas de LEXICONS por chave (avançado)
 }
 
@@ -190,7 +204,8 @@ DEFAULT_HUNTS = [
     ("CAÇA 11 — links de afiliados", "affiliate_links",
      ["\"aff=\" plataforma", "\"ref=\" bônus cadastro", "affiliate cadastro bônus"]),
     ("CAÇA 12 — domínios encontrados anteriormente", "known_domains", []),
-    ("CAÇA 13 — matriz de consultas (jogos × CTA × financeiro × afiliados)", "matrix", []),
+    ("CAÇA 13 — TIKTOK COMMERCIAL CONTENT", "commercial", []),
+    ("CAÇA 14 — matriz de consultas (jogos × CTA × financeiro × afiliados)", "matrix", []),
 ]
 DEFAULT_HUNT_SOURCES = ["ddg", "bing", "tiktok"]
 

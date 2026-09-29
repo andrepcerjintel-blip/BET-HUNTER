@@ -5,7 +5,11 @@ const jq = s => esc(JSON.stringify(String(s ?? '')));  // literal JS seguro dent
 const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : '';
 const NI = 'NÃO IDENTIFICADO';
 const STATUSES = ['NOVO','REVISAR','CONFIRMADO','DESCARTADO','BAIXA RELEVÂNCIA','DUPLICADO','PERFIL INDISPONÍVEL','CONTEÚDO REMOVIDO','JÁ ENCAMINHADO'];
-const SOURCES = [['ddg','DuckDuckGo'],['bing','Bing'],['tiktok','TikTok Search'],['tiktok_tag','TikTok Hashtag']];
+const SOURCES = [['ddg','DuckDuckGo'],['bing','Bing'],['tiktok','TikTok Search'],['tiktok_tag','TikTok Hashtag'],['commercial','TikTok Commercial Content API']];
+let CSTATE = 'NÃO CONFIGURADA';   // estado da Commercial API (sem rede; vem de /api/env)
+async function loadCState() { try { CSTATE = ((await api('/api/env'))['TIKTOK COMMERCIAL API'] || {}).estado || CSTATE; } catch (e) {} }
+const srcCheck = (k, n, cls, on) => { const off = k === 'commercial' && CSTATE === 'NÃO CONFIGURADA';
+  return `<label class="i"><input type="checkbox" class="${cls}" value="${k}" ${off ? 'disabled' : (on ? 'checked' : '')}>${n}${off ? ' <span class="tag warn">NÃO CONFIGURADA</span>' : ''}</label>`; };
 const S = {view:'results', filters:{}, page:1, per:50, sort:'priority', items:[], total:0, sel:new Set(), cur:-1, facets:{}, settings:null};
 
 async function api(path, opt = {}) {
@@ -279,12 +283,12 @@ async function trackJob(jobId, onDone) {
   }
 }
 async function openMission() {
-  const s = S.settings = await api('/api/settings');
+  const s = S.settings = await api('/api/settings'); await loadCState();
   const m = modal(`<h2>INICIAR MISSÃO</h2><p class="mut">Busca continuamente (matriz de consultas + caças + expansão dos candidatos encontrados) até atingir a meta de confirmados, formar um pool de ≈ meta × ${s.pool_factor} candidatos qualificados, esgotar as consultas ou você interromper. A meta acompanha o fluxo de análise: <b>nada é confirmado automaticamente</b>.</p>
    <div class="filters">META <input id="mGoal" type="number" value="${s.goal}" style="width:80px"> PROFUNDIDADE
      <select id="mDepth">${[0, 1, 2, 3].map(d => `<option ${d === s.mission_depth ? 'selected' : ''}>${d}</option>`).join('')}</select>
      MODO <select id="mMode"><option value="rapido" ${s.mission_mode === 'rapido' ? 'selected' : ''}>RÁPIDO (texto, bio, URL, domínio, score)</option><option value="completo" ${s.mission_mode === 'completo' ? 'selected' : ''}>COMPLETO (+ redirecionamentos, perfis, páginas, visual)</option></select></div>
-   <div class="filters">${SOURCES.map(([k, n]) => `<label class="i"><input type="checkbox" class="mSrc" value="${k}" ${(s.mission_sources || []).includes(k) ? 'checked' : ''}>${n}</label>`).join('')}</div>
+   <div class="filters">${SOURCES.map(([k, n]) => srcCheck(k, n, 'mSrc', (s.mission_sources || []).includes(k))).join('')}</div>
    <button class="mission-btn" id="mGo">▶ INICIAR</button>`, 'sm');
   $('#mGo', m).onclick = async () => {
     const r = await api('/api/mission/start', {json: {goal: +$('#mGoal', m).value, depth: +$('#mDepth', m).value, mode: $('#mMode', m).value, sources: [...m.querySelectorAll('.mSrc:checked')].map(c => c.value)}});
@@ -375,9 +379,10 @@ function openManual() {
   };
 }
 async function openSearch() {
+  await loadCState();
   if (!S.settings) S.settings = await api('/api/settings');
   const st = S.settings;
-  const srcBox = `<div class="filters">${SOURCES.map(([k, n]) => `<label class="i"><input type="checkbox" class="sSrc" value="${k}" ${k !== 'tiktok_tag' ? 'checked' : ''}>${n}</label>`).join('')}</div>`;
+  const srcBox = `<div class="filters">${SOURCES.map(([k, n]) => srcCheck(k, n, 'sSrc', k !== 'tiktok_tag' && k !== 'commercial')).join('')}</div>`;
   const m = modal(`<h2>NOVA BUSCA</h2><p class="mut">Nenhuma palavra isolada é evidência: resultados são candidatos e só sobem de prioridade com sinais combinados. Fontes automáticas podem estar bloqueadas — veja o log e use os links manuais + importação.</p>
    <div class="filters"><button class="sm" data-t="free">Livre</button><button class="sm" data-t="combo">Combinar termos</button><button class="sm" data-t="games">Jogos (lista editável)</button><button class="sm" data-t="tags">Hashtags</button></div>
    <div id="sBody"></div>${srcBox}<button class="primary" id="sGo">EXECUTAR BUSCA</button> <button id="sMan">abrir buscas manuais (navegador)</button><div id="sOut"></div>`);
@@ -425,7 +430,7 @@ async function renderClusters() {
 /* ------------------------------------------------------------ caças */
 async function renderHunts() {
   const hs = await api('/api/hunts');
-  const desc = {queries: 'consultas editáveis', expand_confirmed: 'expande perfis com status CONFIRMADO', affiliate_links: 'consultas + IDs de afiliado já encontrados', known_domains: 'consultas + domínios já encontrados/cadastrados'};
+  const desc = {queries: 'consultas editáveis', expand_confirmed: 'expande perfis com status CONFIRMADO', commercial: 'fonte oficial · termos em CONFIG', affiliate_links: 'consultas + IDs de afiliado já encontrados', known_domains: 'consultas + domínios já encontrados/cadastrados'};
   $('#view').innerHTML = `<div class="filters"><h2 style="margin:0">CAÇAS</h2><button class="primary" onclick="runHunts()">EXECUTAR HABILITADAS</button><button onclick="newHunt()">+ NOVA CAÇA</button></div>` +
     hs.map(h => `<div class="hunt ${h.enabled ? '' : 'off'}" data-id="${h.id}"><div class="filters"><label class="i"><input type="checkbox" class="hEn" ${h.enabled ? 'checked' : ''}><b>habilitada</b></label>
       <input class="hName grow" value="${esc(h.name)}" style="max-width:none"><span class="tag">${esc(desc[h.kind] || h.kind)}</span><span class="mut">última: ${esc(fmtDate(h.last_run))}</span></div>
@@ -475,9 +480,9 @@ async function renderLog() {
 }
 
 /* ------------------------------------------------------------ ambiente */
-const ENV_ORDER = ['INTERNET', 'DUCKDUCKGO', 'BING', 'TIKTOK', 'YT-DLP', 'ANTHROPIC', 'TESSERACT', 'BANCO', 'VISUAL_ANALYSIS'];
+const ENV_ORDER = ['INTERNET', 'DUCKDUCKGO', 'BING', 'TIKTOK', 'TIKTOK COMMERCIAL API', 'YT-DLP', 'ANTHROPIC', 'TESSERACT', 'BANCO', 'VISUAL_ANALYSIS'];
 function envHtml(st) {
-  const cls = e => ['OK', 'INSTALADO', 'CONFIGURADO', 'DISPONÍVEL'].includes(e) ? 'pos' : (['ERRO', 'BLOQUEADO'].includes(e) ? 'neg' : 'mut');
+  const cls = e => ['OK', 'INSTALADO', 'CONFIGURADO', 'DISPONÍVEL'].includes(e) ? 'pos' : (['ERRO', 'BLOQUEADO', 'AUTENTICAÇÃO FALHOU', 'SEM PERMISSÃO PARA O ENDPOINT', 'RATE LIMITED'].includes(e) ? 'neg' : 'mut');
   return `<div class="kv" style="grid-template-columns:170px 150px 1fr">${ENV_ORDER.filter(k => st[k]).map(k => `<div>${k}</div><div><b class="${cls(st[k].estado)}">${esc(st[k].estado)}</b></div><div class="mut">${esc(st[k].detalhe || '')}</div>`).join('')}</div>`;
 }
 async function openEnv() {
@@ -492,7 +497,7 @@ async function openEnv() {
 }
 
 /* ------------------------------------------------------------ config */
-const WLABEL = {link_bet:'link externo (aposta)',cta:'CTA explícito',gameplay:'vídeo de jogo',platform:'nome/logo plataforma',payment:'saque/pagamento',aff_link:'parâmetro de afiliado',bonus_code:'bônus/cupom/código',group:'grupo Telegram/WhatsApp',shared_domain:'domínio compartilhado',hashtag:'hashtag relacionada',expressions:'expressões (horário pagante…)',recurrence:'recorrência',padrao_recorrente:'padrão promocional recorrente',r_journalism:'redutor jornalismo',r_critica:'redutor crítica',r_institutional:'redutor institucional',r_legal:'redutor jurídico',r_educ:'redutor educativo/prevenção',r_legislation:'redutor legislação',r_comment:'redutor comentário',r_incidental:'redutor uso incidental'};
+const WLABEL = {link_bet:'link externo (aposta)',cta:'CTA explícito',gameplay:'vídeo de jogo',platform:'nome/logo plataforma',payment:'saque/pagamento',aff_link:'parâmetro de afiliado',bonus_code:'bônus/cupom/código',group:'grupo Telegram/WhatsApp',shared_domain:'domínio compartilhado',hashtag:'hashtag relacionada',expressions:'expressões (horário pagante…)',recurrence:'recorrência',padrao_recorrente:'padrão promocional recorrente',r_journalism:'redutor jornalismo',r_critica:'redutor crítica',r_institutional:'redutor institucional',r_legal:'redutor jurídico',r_educ:'redutor educativo/prevenção',r_legislation:'redutor legislação',r_comment:'redutor comentário',r_incidental:'redutor uso incidental',origin_commercial:'origem Commercial Content API (não indica ilicitude)'};
 async function renderConfig() {
   const s = S.settings = await api('/api/settings');
   const ta = (id, arr, h) => `<h3>${h}</h3><textarea id="${id}" style="min-height:110px">${esc(arr.join('\n'))}</textarea>`;
@@ -507,6 +512,14 @@ async function renderConfig() {
    <div>${ta('cPlat', s.platforms, 'Plataformas (Nome|dominio1,dominio2)')}${ta('cDom', s.bet_domains, 'Domínios de apostas conhecidos')}</div></div>
    <div class="grid2"><div>${ta('cAgg', s.aggregators, 'Agregadores de links')}</div><div>${ta('cGen', s.generic_games, 'Termos de jogo genéricos (não bastam p/ “gameplay”)')}</div></div>
    <h3>Matriz de consultas (Grupos A–D; a missão combina A+B, A+C, B+C, A+D, B+D)</h3><div class="grid2"><div>${ta('mxA', s.matrix.A, 'A — jogos')}${ta('mxC', s.matrix.C, 'C — financeiro')}</div><div>${ta('mxB', s.matrix.B, 'B — CTA')}${ta('mxD', s.matrix.D, 'D — afiliados')}</div></div>
+   <h3>TikTok Commercial Content API (fonte opcional)</h3>
+   <div class="box"><div class="filters"><label class="i"><input type="checkbox" id="caOn" ${s.commercial_api_enabled ? 'checked' : ''}>habilitada</label> País <input id="caCountry" maxlength="2" value="${esc(s.commercial_api_country)}" style="width:55px">
+     Máx. páginas <input id="caPages" type="number" min="1" value="${s.commercial_api_max_pages}" style="width:65px"> max_count/página <input id="caMax" type="number" min="1" value="${s.commercial_api_max_count}" style="width:65px">
+     Período <select id="caRange">${[['hoje', 'HOJE'], ['24h', 'ÚLTIMAS 24 HORAS'], ['3d', 'ÚLTIMOS 3 DIAS'], ['7d', 'ÚLTIMOS 7 DIAS'], ['custom', 'INTERVALO PERSONALIZADO']].map(([v, n]) => `<option value="${v}" ${s.commercial_api_range === v ? 'selected' : ''}>${n}</option>`).join('')}</select>
+     Data inicial <input id="caFrom" type="date" value="${esc(s.commercial_api_date_from)}"> Data final <input id="caTo" type="date" value="${esc(s.commercial_api_date_to)}"></div>
+     <div class="filters">URL do endpoint de token (da documentação oficial) <input id="caTok" value="${esc(s.commercial_api_token_url)}" placeholder="pendente: informe a URL oficial" style="flex:1;max-width:none"></div>
+     ${ta('caTerms', s.commercial_api_terms, 'Termos de busca (search_term)')}
+     <div class="mut">Credenciais somente por variável de ambiente (.env): TIKTOK_CLIENT_KEY e TIKTOK_CLIENT_SECRET — nunca são gravadas no banco. Peso do score: campo “origem Commercial Content API” acima. A origem não significa ilicitude.</div></div>
    <h3>Léxicos avançados (JSON — sobrescreve listas padrão por chave: cta, payment, bonus, group, expressions, bet_terms, fp_*)</h3><textarea id="cLex" style="min-height:70px">${esc(JSON.stringify(s.lexicons || {}, null, 1))}</textarea>
    <div class="filters" style="margin-top:10px"><button class="primary" onclick="saveConfig(false)">SALVAR</button><button onclick="saveConfig(true)">SALVAR E REANALISAR TUDO</button></div>`;
 }
@@ -517,6 +530,9 @@ async function saveConfig(re) {
     request_delay: +$('#cDelay').value, enrich_max: +$('#cEnr').value, http_timeout: +$('#cTo').value, http_max_retries: +$('#cRt').value, http_min_interval: +$('#cMi').value, auto_discard_low: $('#cAuto').checked, resolve_links: $('#cRes').checked, enrich_after_search: $('#cEnrich').checked,
     games: lines($('#cGames').value), hashtags: lines($('#cHash').value).map(h => h.replace(/^#/, '')), platforms: lines($('#cPlat').value), bet_domains: lines($('#cDom').value),
     aggregators: lines($('#cAgg').value), generic_games: lines($('#cGen').value), lexicons: lex,
+    commercial_api_enabled: $('#caOn').checked, commercial_api_country: $('#caCountry').value.trim().toUpperCase() || 'BR', commercial_api_max_pages: +$('#caPages').value,
+    commercial_api_max_count: +$('#caMax').value, commercial_api_range: $('#caRange').value, commercial_api_date_from: $('#caFrom').value, commercial_api_date_to: $('#caTo').value,
+    commercial_api_token_url: $('#caTok').value.trim(), commercial_api_terms: lines($('#caTerms').value),
     matrix: {A: lines($('#mxA').value), B: lines($('#mxB').value), C: lines($('#mxC').value), D: lines($('#mxD').value)}};
   const r = await api('/api/settings' + (re ? '?reanalyze=1' : ''), {method: 'PUT', json: body}); S.settings = r.settings;
   toast(re ? `Salvo. ${r.reanalisados} candidatos reanalisados.` : 'Configurações salvas'); loadStats();

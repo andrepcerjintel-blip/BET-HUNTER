@@ -117,6 +117,40 @@ def fetch(url, method="GET", allow_redirects=False, timeout=None, headers=None, 
     return out
 
 
+def post(url, headers=None, data=None, json_body=None, params=None, timeout=None):
+    """POST (form ou JSON) com timeout/retry de conexão/ritmo. Nunca levanta e NUNCA registra corpo/credenciais.
+    -> {'status', 'json', 'text', 'retry_after', 'error'}"""
+    timeout = timeout or CFG["timeout"]
+    out = {"status": None, "json": None, "text": "", "retry_after": None, "error": None}
+    p = urlparse(url)
+    if p.scheme != "https" or not p.hostname:
+        out["error"] = "URL inválida (é exigido https)"
+        return out
+    h = {"User-Agent": HEADERS["User-Agent"], "Accept": "application/json"}
+    h.update(headers or {})
+    kw = {"headers": h, "params": params, "stream": False}
+    if json_body is not None:
+        kw["json"] = json_body
+    if data is not None:
+        kw["data"] = data
+    r, err = _request("POST", url, timeout, True, **kw)
+    if r is None:
+        out["error"] = short_error(err)
+        return out
+    try:
+        out["status"] = r.status_code
+        out["text"] = (r.text or "")[:20000]
+        ra = r.headers.get("Retry-After")
+        out["retry_after"] = float(ra) if ra and ra.replace(".", "", 1).isdigit() else None
+        try:
+            out["json"] = r.json()
+        except ValueError:
+            out["json"] = None
+    finally:
+        r.close()
+    return out
+
+
 def fetch_bytes(url, max_bytes=800_000, timeout=None):
     """Baixa binário (thumbnail). -> bytes | None. Mesmas proteções de fetch()."""
     timeout = timeout or CFG["timeout"]

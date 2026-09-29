@@ -58,16 +58,16 @@ def upsert_candidate(conn, username, *, source, query="", url="", hunt="", profi
 
 
 def add_evidence(conn, cid, kind, *, source="", source_url="", query="", url_video="", caption="", text="",
-                 hashtags=None, mentions=None, tags=None):
+                 hashtags=None, mentions=None, tags=None, meta=None, dedupe_key=None):
     body = norm((caption or "") + " " + (text or ""))[:400]
-    key = hashlib.sha1(f"{kind}|{url_video}|{body}".encode()).hexdigest()
+    key = dedupe_key or hashlib.sha1(f"{kind}|{url_video}|{body}".encode()).hexdigest()
     hashtags = hashtags if hashtags is not None else extract_hashtags((caption or "") + " " + (text or ""))
     mentions = mentions if mentions is not None else extract_mentions((caption or "") + " " + (text or ""))
     cur = conn.execute(
         "INSERT OR IGNORE INTO evidences(candidate_id,kind,source,source_url,query,url_video,caption,text,hashtags,"
-        "mentions,tags,collected_at,dedupe_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "mentions,tags,collected_at,dedupe_key,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (cid, kind, source, source_url, query, url_video, caption, text, jd(hashtags), jd(mentions), jd(tags or []),
-         now_iso(), key))
+         now_iso(), key, jd(meta or {})))
     return cur.rowcount > 0
 
 
@@ -173,7 +173,7 @@ def load_bundle(conn, cid):
         evs.append({"id": e["id"], "kind": e["kind"], "caption": e["caption"], "text": e["text"],
                     "url_video": e["url_video"], "hashtags": jl(e["hashtags"]), "mentions": jl(e["mentions"]),
                     "tags": jl(e["tags"]), "source": e["source"], "source_url": e["source_url"],
-                    "collected_at": e["collected_at"], "query": e["query"]})
+                    "collected_at": e["collected_at"], "query": e["query"], "meta": jl(e["meta"], {})})
     links = []
     for l in conn.execute("SELECT * FROM links WHERE candidate_id=? ORDER BY id", (cid,)):
         links.append({"id": l["id"], "origin": l["origin"], "url_original": l["url_original"],
@@ -303,7 +303,7 @@ def apply_bonus(conn, cid, settings):
 
 
 def apply_auto_status(conn, cid, settings):
-    c = conn.execute("SELECT status, status_manual, evidence_count, classification, profile_status FROM candidates WHERE id=?",
+    c = conn.execute("SELECT status, status_manual, evidence_count, classification, profile_status, flags FROM candidates WHERE id=?",
                      (cid,)).fetchone()
     if c["status_manual"]:
         return
@@ -312,7 +312,10 @@ def apply_auto_status(conn, cid, settings):
     elif c["evidence_count"] == 0:
         new = "NOVO"
     elif c["classification"].startswith("BAIXA"):
-        new = "DESCARTADO" if settings.get("auto_discard_low", False) else "BAIXA RELEVÂNCIA"
+        if jl(c["flags"], {}).get("commercial_origin"):
+            new = "NOVO"       # anúncio da fonte oficial: fica visível para revisão (nunca confirmado automaticamente)
+        else:
+            new = "DESCARTADO" if settings.get("auto_discard_low", False) else "BAIXA RELEVÂNCIA"
     else:
         new = "REVISAR"
     if new != c["status"]:
@@ -351,11 +354,50 @@ def _ingest_urls(hits):
     return list(dict.fromkeys(urls))
 
 
+def _ingest_commercial(conn, h, hunt):
+    """Anúncio da Commercial Content API -> candidato + evidência automática. Dedupe global por ad.id.
+    Só `ad.id` é confirmado: sem perfil/URL inventados (profile_url fica vazio = NÃO IDENTIFICADO).
+    -> (cid|None, is_new)"""
+    from . import commercial
+    aid, term = h["ad_id"], h["term"]
+    dk = "commercial|" + aid
+    uname = commercial.CANDIDATE_PREFIX + aid
+    if conn.execute("SELECT 1 FROM evidences WHERE dedupe_key=?", (dk,)).fetchone():
+        row = conn.execute("SELECT id FROM candidates WHERE username=?", (uname,)).fetchone()
+        if row:   # mesmo anúncio por outro termo: registra só a descoberta, sem duplicar
+            conn.execute("INSERT OR IGNORE INTO discoveries(candidate_id,source,query,hunt,url,found_at) VALUES(?,?,?,?,?,?)",
+                         (row["id"], commercial.SOURCE, term, hunt or "", h["source_url"], now_iso()))
+        return None, False
+    cid, is_new = upsert_candidate(conn, uname, source=commercial.SOURCE, query=term, url=h["source_url"], hunt=hunt,
+                                   count_dup=False)
+    if is_new:
+        conn.execute("UPDATE candidates SET profile_url='', display_name=?, profile_status='ANUNCIO' WHERE id=?",
+                     (f"Anúncio (ad.id {aid})", cid))
+    when = now_iso()
+    text = (f"{commercial.EVIDENCE_TEXT}\nTERM: {term}\nCOUNTRY: {h['country']}\nDATE_RANGE: {h['date_range']}\n"
+            f"AD_ID: {aid}\nDATA_COLETA: {when}")
+    meta = {"source": commercial.SOURCE, "source_type": commercial.SOURCE_TYPE, "term": term, "country": h["country"],
+            "date_range": h["date_range"], "ad_id": aid, "raw": h["raw"]}
+    add_evidence(conn, cid, "commercial", source=commercial.SOURCE, source_url=commercial.ENDPOINT, query=term, text=text,
+                 hashtags=[], mentions=[], tags=[], meta=meta, dedupe_key=dk)
+    return cid, is_new
+
+
 def ingest_hits(conn, hits, settings, *, hunt="", origin=None, resolved=None):
     resolved = resolved or {}
     stats = {"found": len(hits), "new": 0, "dups": 0, "new_ids": [], "ids": set()}
     seen = {}
     for h in hits:
+        if h.get("commercial"):
+            cid, is_new = _ingest_commercial(conn, h, hunt)
+            if cid is None:
+                stats["dups"] += 1
+            else:
+                stats["ids"].add(cid)
+                if is_new:
+                    stats["new"] += 1
+                    stats["new_ids"].append(cid)
+            continue
         u = h["username"]
         src = origin or h["source"]
         if u not in seen:
@@ -393,7 +435,8 @@ def log_search(conn, hunt, query, source, found, new, dups, errors, msg, t0):
 def run_query(q, source, settings, hunt="", origin=None):
     """Executa UMA consulta em UMA fonte: rede -> ingestão -> log."""
     from . import mission
-    q = mission.sanitize_query(q, settings)   # termo genérico nunca vai sozinho
+    if source != "commercial":               # a API oficial recebe o termo como está (exceto bet/bets/aposta/apostas)
+        q = mission.sanitize_query(q, settings)   # termo genérico nunca vai sozinho
     t0 = time.time()
     try:
         hits, err, _ = sources.run_source(source, q)
@@ -411,7 +454,7 @@ def run_query(q, source, settings, hunt="", origin=None):
         except Exception as e:
             log.exception("CONSULTA=%s | falha na resolução de URLs", q)
             err = (err or "") + f" (resolução de URLs: {type(e).__name__})"
-    label = origin or sources.SOURCE_LABELS.get(source, source)
+    label = sources.SOURCE_LABELS[source] if source == "commercial" else (origin or sources.SOURCE_LABELS.get(source, source))
     if err:
         log.warning("FONTE=%s | CONSULTA=%s | ERRO=%s", sources.SOURCE_LABELS.get(source, source), q, err)
     with db.connect() as conn:
@@ -623,6 +666,8 @@ def _all_hunt_queries(conn, hunt, settings):
     if kind == "matrix":
         from . import mission
         qs += [(q, None) for q in mission.generate_queries(settings)]
+    if kind == "commercial":   # termos editáveis em CONFIG (+ os da própria caça)
+        qs += [(t, None) for t in settings.get("commercial_api_terms", [])]
     if kind == "affiliate_links":
         seen = set()
         for r in conn.execute("SELECT params FROM links"):
@@ -655,6 +700,11 @@ def run_hunt(hunt_id, job=None):
         if h["kind"] == "expand_confirmed":
             expand_ids = [r[0] for r in conn.execute("SELECT id FROM candidates WHERE status='CONFIRMADO' LIMIT 40")]
     srcs = jl(h["sources"]) or sources.SEARCH_SOURCES
+    from . import commercial
+    if "commercial" in srcs and not commercial.usable(settings):
+        srcs = [x for x in srcs if x != "commercial"]      # não configurada: ignora sem repetir erro
+        if job:
+            job.log("TikTok Commercial Content API NÃO CONFIGURADA: fonte ignorada nesta caça")
     tasks = [(q, s, o) for q, o in qs for s in srcs]
     total_steps = len(tasks) + len(expand_ids)
     tot = {"found": 0, "new": 0, "dups": 0, "errors": 0}
@@ -858,6 +908,11 @@ class Job:
                 "lines": self.lines[-40:], "result": self.result, "error": self.error, "stats": self.stats,
                 "cancelled": self.cancelled,
                 "elapsed": round(time.time() - self.started, 1)}
+
+
+def any_cancel():
+    """Há algum job em execução com pedido de interrupção? (usado pela paginação da Commercial API)"""
+    return any(j.cancelled for j in JOBS.values() if j.status == "running")
 
 
 def start_job(label, fn, sync=False):

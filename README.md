@@ -35,6 +35,17 @@ Rede: timeout, tentativas extras (padrão 2), intervalo mínimo entre requisiç�
 7. **EXPORTAR CONFIRMADOS** (CSV/XLSX); o arquivo também fica em `exportacoes\`.
 8. Para volume: **▶ INICIAR MISSÃO**.
 
+## TikTok Commercial Content API (fonte oficial adicional, opcional)
+
+Mais um provider do mesmo pipeline (`bethunter/commercial.py`): consulta `POST https://open.tiktokapis.com/v2/research/adlib/ad/query/` com `fields=ad.id`, `search_term`, `max_count` e os filtros `country_code` e `ad_published_date_range`, paginando por `has_more` + `search_id` (1ª chamada sem `search_id`; limite de páginas configurável).
+* **Credenciais** só por variável de ambiente (`.env`): `TIKTOK_CLIENT_KEY` e `TIKTOK_CLIENT_SECRET`. Nunca vão ao banco/código; o token fica só em memória. Sem elas: **NÃO CONFIGURADA** e o resto funciona normalmente.
+* **Autenticação**: a URL do endpoint de token **não consta na base documental do projeto** e não foi inventada. Informe-a em **CONFIG → TikTok Commercial Content API → URL do endpoint de token** (copie da documentação oficial). Enquanto vazia, o estado é *CREDENCIAIS ENCONTRADAS — autenticação pendente*.
+* **Somente `ad.id`** é solicitado (`commercial_api_fields`); o payload bruto de cada item fica guardado na evidência. Sem advertiser/URL/texto do anúncio: nada foi inferido. Cada anúncio vira um candidato `ad:<id>` (sem perfil/URL inventados → NÃO IDENTIFICADO), tipo **CONTEÚDO COMERCIAL / ANÚNCIO**, evidência automática "Resultado identificado por meio da TikTok Commercial Content API." + TERM/COUNTRY/DATE_RANGE/AD_ID/DATA_COLETA. Dedupe por `ad.id`.
+* **Score**: peso `origem Commercial Content API` (+20, editável) — indica apenas a origem, nunca ilicitude; confirmar continua sendo do analista.
+* **CAÇA 13 — TIKTOK COMMERCIAL CONTENT** (termos editáveis em CONFIG; `bet/bets/aposta/apostas` isolados são ignorados) e checkbox nas buscas/missão. Período (HOJE, 24 h, 3 dias, 7 dias ou datas inicial/final) e país (padrão `BR`) em CONFIG.
+* Erros 401/403/429/5xx/timeout são registrados (fonte, termo, HTTP, erro) sem derrubar as demais fontes; 429 tem uma única nova tentativa. **TESTAR AMBIENTE** mostra: NÃO CONFIGURADA · CREDENCIAIS ENCONTRADAS · AUTENTICAÇÃO FALHOU · SEM PERMISSÃO PARA O ENDPOINT · OK · RATE LIMITED · ERRO.
+* Pontos a conferir na documentação oficial na primeira execução real: formato do corpo do token, formato das datas (`AAAAMMDD`) e estrutura exata da resposta (a leitura é tolerante e o item bruto é preservado).
+
 ## Missão (fluxo principal)
 
 **▶ INICIAR MISSÃO** (meta, profundidade 0–3, modo RÁPIDO/COMPLETO): executa caças + **matriz de consultas** (grupos A jogos × B CTA × C financeiro × D afiliados; termos genéricos nunca vão sozinhos) e transforma o que encontra em novas buscas (domínio, nome da plataforma, ID de afiliado, código, hashtags, jogo, frase da bio) até a profundidade escolhida. Segue até: meta de confirmados, pool qualificado (meta × 2,5), consultas esgotadas ou **INTERROMPER**. Fonte que falha 3 vezes seguidas é pausada (registrado no LOG) e as demais continuam.
@@ -98,6 +109,7 @@ run.py                     # servidor local
 bethunter/config.py        # padrões: pesos, limites, léxicos, jogos, caças
 bethunter/db.py            # SQLite (esquema, configurações)
 bethunter/envcheck.py      # STATUS DO AMBIENTE / TESTAR AMBIENTE
+bethunter/commercial.py    # provider TikTok Commercial Content API (opcional)
 bethunter/urltools.py      # parâmetros de afiliado, cadeia de redirecionamento, agregadores
 bethunter/extract.py       # extração de sinais do texto
 bethunter/scoring.py       # score explicável + classificador de falso positivo

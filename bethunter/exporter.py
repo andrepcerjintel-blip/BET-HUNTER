@@ -16,7 +16,8 @@ FULL_COLS = ["USERNAME", "URL_PERFIL", "NOME_EXIBIDO", "BIO", "URL_VIDEO", "DATA
              "DOMINIO_FINAL", "PARAMETROS_URL", "PLATAFORMA_MENCIONADA", "JOGO_MENCIONADO", "CODIGO_PROMOCIONAL",
              "AFFILIATE_ID", "SCORE", "CLASSIFICACAO", "TIPO", "MOTIVO_SCORE", "EVIDENCIA", "FONTE_DESCOBERTA",
              "STATUS_VALIDACAO", "VISUAL_ANALYSIS", "PADRAO_PROMOCIONAL_RECORRENTE", "OBSERVACAO_ANALISTA", "QTD_EVIDENCIAS",
-             "FONTE_CONSULTADA", "URL_FONTE_CONSULTADA"]
+             "FONTE_CONSULTADA", "URL_FONTE_CONSULTADA",
+             "SOURCE", "SOURCE_TYPE", "SEARCH_TERM", "COUNTRY_CODE", "DATE_RANGE", "AD_ID"]
 
 
 def _v(x):
@@ -51,12 +52,14 @@ def build_rows(conn, f, scope="confirmed", kind="simple"):
                          d["links"][0] if d["links"] else {})
         date, hora, fuso = split_iso(first.get("collected_at") or d["last_analyzed"])
         params = _join([f"{p['param']}={p['value']} ({p['type']}, {p['dominio']})" for l in d["links"] for p in l["params"]])
+        cev = next((e for e in evs if (e.get("meta") or {}).get("source_type") == "CONTEUDO_COMERCIAL"), None)
+        cm = (cev or {}).get("meta") or {}
         motivo = "; ".join(f"{'+' if x['pts'] > 0 else ''}{x['pts']} {x['label']}" + (f" [{x['detail']}]" if x["detail"] else "")
                            for x in d["reasons"])
         if kind == "mission":
             ev_txt = video_ev or first
             out.append({
-                "NUMERO": len(out) + 1, "USERNAME": d["username"], "URL_PERFIL": d["profile_url"],
+                "NUMERO": len(out) + 1, "USERNAME": d["username"], "URL_PERFIL": _v(d["profile_url"]),
                 "URL_VIDEO": _v(d["video_url"]), "DESCRICAO_EVIDENCIA": _v(d["main_evidence"]),
                 "TEXTO_EVIDENCIA": _v((ev_txt.get("caption") or ev_txt.get("text") or d["bio"] or "")),
                 "PLATAFORMA": _v(_join(d["platforms"])), "DOMINIO": _v(d["domain_final"]), "URL_EXTERNA": _v(d["link_final"]),
@@ -65,13 +68,13 @@ def build_rows(conn, f, scope="confirmed", kind="simple"):
                 "OBSERVACAO_ANALISTA": d["analyst_note"] or ""})
         elif kind == "simple":
             out.append({
-                "username": d["username"], "url_perfil": d["profile_url"], "url_video": _v(d["video_url"]),
+                "username": d["username"], "url_perfil": _v(d["profile_url"]), "url_video": _v(d["video_url"]),
                 "evidencia": _v(d["main_evidence"]), "dominio": _v(d["domain_final"]), "url_externa": _v(d["link_final"]),
                 "score": d["score"], "status": d["status"], "data_coleta": f"{date} {hora} {fuso}".strip() or NAO_IDENTIFICADO,
                 "observacao_analista": d["analyst_note"] or ""})
         else:
             out.append({
-                "USERNAME": d["username"], "URL_PERFIL": d["profile_url"], "NOME_EXIBIDO": _v(d["display_name"]),
+                "USERNAME": d["username"], "URL_PERFIL": _v(d["profile_url"]), "NOME_EXIBIDO": _v(d["display_name"]),
                 "BIO": _v(d["bio"]), "URL_VIDEO": _v(d["video_url"]), "DATA_COLETA": date or NAO_IDENTIFICADO,
                 "HORA_COLETA": hora or NAO_IDENTIFICADO, "FUSO_HORARIO": fuso or NAO_IDENTIFICADO,
                 "LEGENDA": _v(video_ev.get("caption")), "TEXTO_RELEVANTE": _v(_join([e["caption"] or e["text"] for e in evs[:3]])),
@@ -86,7 +89,10 @@ def build_rows(conn, f, scope="confirmed", kind="simple"):
                 "VISUAL_ANALYSIS": (d.get("visual_analysis") or "não disponível").upper(),
                 "PADRAO_PROMOCIONAL_RECORRENTE": "SIM" if d["recurring"] else "NÃO",
                 "OBSERVACAO_ANALISTA": d["analyst_note"] or "", "QTD_EVIDENCIAS": d["evidence_count"],
-                "FONTE_CONSULTADA": _v(first.get("source")), "URL_FONTE_CONSULTADA": _v(first.get("source_url"))})
+                "FONTE_CONSULTADA": _v(first.get("source")), "URL_FONTE_CONSULTADA": _v(first.get("source_url")),
+                "SOURCE": _v(d["discoveries"][0]["source"] if d["discoveries"] else ""),
+                "SOURCE_TYPE": cm.get("source_type") or NAO_IDENTIFICADO, "SEARCH_TERM": _v(cm.get("term")),
+                "COUNTRY_CODE": _v(cm.get("country")), "DATE_RANGE": _v(cm.get("date_range")), "AD_ID": _v(cm.get("ad_id"))})
     return out
 
 
@@ -136,9 +142,11 @@ def copy_list(conn, f, what="profiles", scope="confirmed"):
     for r in rows:
         c = conn.execute("SELECT username, profile_url FROM candidates WHERE id=?", (r["id"],)).fetchone()
         if what == "profiles":
-            out.append(c["profile_url"])
+            if c["profile_url"]:            # anúncio sem perfil identificado não gera URL
+                out.append(c["profile_url"])
         elif what == "usernames":
-            out.append("@" + c["username"])
+            if c["profile_url"]:
+                out.append("@" + c["username"])
         elif what == "videos":
             for e in conn.execute("SELECT DISTINCT url_video FROM evidences WHERE candidate_id=? AND url_video!='' AND kind!='relacao'", (r["id"],)):
                 out.append(e[0])

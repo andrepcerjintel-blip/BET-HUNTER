@@ -5,7 +5,7 @@ import time
 from collections import deque
 from datetime import datetime, timedelta
 
-from . import db, extract, pipeline, queries, sources, urltools, visual
+from . import commercial, db, extract, pipeline, queries, sources, urltools, visual
 from .db import jl
 from .util import base_domain, find_terms, norm, now_iso
 
@@ -106,18 +106,25 @@ def snapshot(conn, goal):
 def _initial_tasks(conn, s):
     base, seen = [], set()
 
-    def add(q, origin):
-        q = sanitize_query(q, s)
-        k = norm(q)
+    def add(q, origin, only=None):
+        if only is None:
+            q = sanitize_query(q, s)
+        elif norm(q).strip('"') in commercial.NOISE_TERMS:
+            return                       # bet/bets/aposta/apostas nunca como termo principal isolado
+        k = ("C|" if only else "") + norm(q)
         if k not in seen:
             seen.add(k)
-            base.append((q, origin))
+            base.append((q, origin, only))
     matrix_q = []
     for h in conn.execute("SELECT * FROM hunts WHERE enabled=1 ORDER BY position").fetchall():
         if h["kind"] == "expand_confirmed":
             continue
         if h["kind"] == "matrix":
             matrix_q = generate_queries(s)
+            continue
+        if h["kind"] == "commercial":    # só na fonte oficial; termos editáveis em CONFIG
+            for q, origin in pipeline._all_hunt_queries(conn, h, s):
+                add(q, origin, only=("commercial",))
             continue
         for q, origin in pipeline._all_hunt_queries(conn, h, s):
             add(q, origin)
@@ -155,7 +162,16 @@ def run_mission(job, goal, depth, mode, sources_list):
         derived_from.add(r["id"])
         push_derived(r, 1)
 
-    active = [x for x in sources_list if x in ("ddg", "bing", "tiktok", "tiktok_tag")] or ["ddg", "bing", "tiktok"]
+    std = [x for x in sources_list if x in ("ddg", "bing", "tiktok", "tiktok_tag")]
+    want_commercial = "commercial" in sources_list
+    if not std and not want_commercial:
+        std = ["ddg", "bing", "tiktok"]
+    active = list(std)
+    if want_commercial:                   # Commercial API é só mais uma fonte: se indisponível, as demais seguem
+        if commercial.usable(s):
+            active.append("commercial")
+        else:
+            job.log("TikTok Commercial Content API NÃO CONFIGURADA: fonte ignorada nesta missão")
     paused, fails = [], {x: 0 for x in active}
     done = enriched = 0
     reason = "consultas esgotadas"
@@ -173,15 +189,19 @@ def run_mission(job, goal, depth, mode, sources_list):
             reason = f"pool qualificado suficiente ({snap['pool']} candidatos p/ revisão+confirmados)"; break
         if not active:
             reason = "todas as fontes automáticas indisponíveis (use IMPORTAR LISTA / evidência manual)"; break
+        only = None
         if derived:
             q, dp, origin = derived.popleft()
         elif base:
-            q, origin = base.popleft(); dp = 0
+            q, origin, only = base.popleft(); dp = 0
         else:
             break
+        run_srcs = [x for x in only if x in active] if only else [x for x in active if x != "commercial"]
+        if not run_srcs:
+            continue                      # sem fonte disponível para esta consulta (ex.: Commercial API não configurada)
         job.stats["consulta_atual"] = q
         touched, new_ids = set(), []
-        for src in list(active):
+        for src in run_srcs:
             if (q, sources.SOURCE_LABELS.get(src, src)) in recent:
                 continue
             st = pipeline.run_query(q, src, eff, hunt="missão", origin=origin)

@@ -165,7 +165,7 @@ def test_first_run_creates_everything_and_restart_preserves(tmp_path, monkeypatc
     tables = {r[0] for r in sqlite3.connect(p).execute("select name from sqlite_master where type='table'")}
     assert {"candidates", "evidences", "links", "discoveries", "hunts", "search_log", "settings", "visuals", "cluster_members"} <= tables
     s = c.get("/api/settings").json
-    assert s["thresholds"] == {"alta": 70, "revisar": 45} and s["auto_discard_low"] is False and len(c.get("/api/hunts").json) == 13
+    assert s["thresholds"] == {"alta": 70, "revisar": 45} and s["auto_discard_low"] is False and len(c.get("/api/hunts").json) == 14
     # dados do analista
     c.put("/api/settings", json={"weights": {"cta": 33}, "games": ["Meu Jogo"], "thresholds": {"alta": 80}})
     c.post("/api/import", json={"text": "@um\n@dois"})
@@ -180,7 +180,7 @@ def test_first_run_creates_everything_and_restart_preserves(tmp_path, monkeypatc
     assert s2["weights"]["cta"] == 33 and s2["games"] == ["Meu Jogo"] and s2["thresholds"]["alta"] == 80 and s2["thresholds"]["revisar"] == 45
     assert c2.get("/api/stats").json["total"] == 3 and c2.get(f"/api/candidates/{tid}").json["analyst_note"] == "guardar"
     h = c2.get("/api/hunts").json[0]
-    assert h["queries"] == ["minha consulta"] and h["enabled"] is False and len(c2.get("/api/hunts").json) == 13
+    assert h["queries"] == ["minha consulta"] and h["enabled"] is False and len(c2.get("/api/hunts").json) == 14
     # exportação também é salva em exportacoes/
     r = c2.get("/api/export?format=csv&kind=mission&scope=confirmed")
     assert r.status_code == 200 and len(os.listdir(tmp_path / "ex")) == 1

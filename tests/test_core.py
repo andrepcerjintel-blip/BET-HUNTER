@@ -255,7 +255,7 @@ def test_expand_mentions_and_related(env):
 def test_hunts_defaults_and_run(env):
     with db.connect() as c:
         hs = c.execute("SELECT * FROM hunts ORDER BY position").fetchall()
-        assert len(hs) == 13 and all(h["enabled"] for h in hs) and hs[-1]["kind"] == "matrix"
+        assert len(hs) == 14 and all(h["enabled"] for h in hs) and hs[-1]["kind"] == "matrix"
         c.execute("UPDATE hunts SET queries=?, sources=? WHERE id=1", (json.dumps(["Fortune Tiger"]), json.dumps(["ddg"])))
     job = pipeline.start_job("t", lambda j: pipeline.run_hunt(1, j), sync=True)
     assert job.status == "done" and job.result["new"] == 3 and job.result["enriched"] == 1
