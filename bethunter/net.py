@@ -55,3 +55,22 @@ def fetch(url, method="GET", allow_redirects=False, timeout=10, headers=None, ma
     except requests.RequestException as e:
         out["error"] = f"{type(e).__name__}: {str(e)[:160]}"
     return out
+
+
+def fetch_bytes(url, max_bytes=800_000, timeout=12):
+    """Baixa binário (thumbnail). -> bytes | None. Mesmas proteções de fetch()."""
+    p = urlparse(url)
+    if p.scheme not in ("http", "https") or not p.hostname or not _public_host(p.hostname):
+        return None
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=timeout, stream=True)
+        if r.status_code != 200:
+            return None
+        raw = b""
+        for chunk in r.iter_content(16384):
+            raw += chunk
+            if len(raw) > max_bytes:
+                return None
+        return raw
+    except requests.RequestException:
+        return None

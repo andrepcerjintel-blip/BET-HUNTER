@@ -9,11 +9,13 @@ from .util import NAO_IDENTIFICADO, split_iso
 
 SIMPLE_COLS = ["username", "url_perfil", "url_video", "evidencia", "dominio", "url_externa", "score", "status",
                "data_coleta", "observacao_analista"]
+MISSION_COLS = ["NUMERO", "USERNAME", "URL_PERFIL", "URL_VIDEO", "DESCRICAO_EVIDENCIA", "TEXTO_EVIDENCIA", "PLATAFORMA",
+                "DOMINIO", "URL_EXTERNA", "CODIGO_AFILIADO", "DATA_COLETA", "OBSERVACAO_ANALISTA"]
 FULL_COLS = ["USERNAME", "URL_PERFIL", "NOME_EXIBIDO", "BIO", "URL_VIDEO", "DATA_COLETA", "HORA_COLETA", "FUSO_HORARIO",
              "LEGENDA", "TEXTO_RELEVANTE", "HASHTAGS", "LINK_BIO", "URL_ORIGINAL", "URL_INTERMEDIARIA", "URL_FINAL",
              "DOMINIO_FINAL", "PARAMETROS_URL", "PLATAFORMA_MENCIONADA", "JOGO_MENCIONADO", "CODIGO_PROMOCIONAL",
              "AFFILIATE_ID", "SCORE", "CLASSIFICACAO", "TIPO", "MOTIVO_SCORE", "EVIDENCIA", "FONTE_DESCOBERTA",
-             "STATUS_VALIDACAO", "PADRAO_PROMOCIONAL_RECORRENTE", "OBSERVACAO_ANALISTA", "QTD_EVIDENCIAS",
+             "STATUS_VALIDACAO", "VISUAL_ANALYSIS", "PADRAO_PROMOCIONAL_RECORRENTE", "OBSERVACAO_ANALISTA", "QTD_EVIDENCIAS",
              "FONTE_CONSULTADA", "URL_FONTE_CONSULTADA"]
 
 
@@ -51,7 +53,17 @@ def build_rows(conn, f, scope="confirmed", kind="simple"):
         params = _join([f"{p['param']}={p['value']} ({p['type']}, {p['dominio']})" for l in d["links"] for p in l["params"]])
         motivo = "; ".join(f"{'+' if x['pts'] > 0 else ''}{x['pts']} {x['label']}" + (f" [{x['detail']}]" if x["detail"] else "")
                            for x in d["reasons"])
-        if kind == "simple":
+        if kind == "mission":
+            ev_txt = video_ev or first
+            out.append({
+                "NUMERO": len(out) + 1, "USERNAME": d["username"], "URL_PERFIL": d["profile_url"],
+                "URL_VIDEO": _v(d["video_url"]), "DESCRICAO_EVIDENCIA": _v(d["main_evidence"]),
+                "TEXTO_EVIDENCIA": _v((ev_txt.get("caption") or ev_txt.get("text") or d["bio"] or "")),
+                "PLATAFORMA": _v(_join(d["platforms"])), "DOMINIO": _v(d["domain_final"]), "URL_EXTERNA": _v(d["link_final"]),
+                "CODIGO_AFILIADO": _v(_join(d["affiliate_ids"] + d["codes"])),
+                "DATA_COLETA": f"{date} {hora} {fuso}".strip() or NAO_IDENTIFICADO,
+                "OBSERVACAO_ANALISTA": d["analyst_note"] or ""})
+        elif kind == "simple":
             out.append({
                 "username": d["username"], "url_perfil": d["profile_url"], "url_video": _v(d["video_url"]),
                 "evidencia": _v(d["main_evidence"]), "dominio": _v(d["domain_final"]), "url_externa": _v(d["link_final"]),
@@ -71,6 +83,7 @@ def build_rows(conn, f, scope="confirmed", kind="simple"):
                 "AFFILIATE_ID": _v(_join(d["affiliate_ids"])), "SCORE": d["score"], "CLASSIFICACAO": d["classification"],
                 "TIPO": d["content_type"], "MOTIVO_SCORE": _v(motivo), "EVIDENCIA": _v(d["main_evidence"]),
                 "FONTE_DESCOBERTA": _v(_join(d["sources"])), "STATUS_VALIDACAO": d["status"],
+                "VISUAL_ANALYSIS": d.get("visual_analysis") or "não disponível",
                 "PADRAO_PROMOCIONAL_RECORRENTE": "SIM" if d["recurring"] else "NÃO",
                 "OBSERVACAO_ANALISTA": d["analyst_note"] or "", "QTD_EVIDENCIAS": d["evidence_count"],
                 "FONTE_CONSULTADA": _v(first.get("source")), "URL_FONTE_CONSULTADA": _v(first.get("source_url"))})
@@ -92,7 +105,7 @@ def export(conn, f, *, fmt="csv", kind="simple", scope="confirmed"):
         return (json.dumps(payload, ensure_ascii=False, indent=2, default=str).encode("utf-8"), "application/json",
                 name + ".json")
     rows = build_rows(conn, f, scope, kind)
-    cols = SIMPLE_COLS if kind == "simple" else FULL_COLS
+    cols = {"simple": SIMPLE_COLS, "mission": MISSION_COLS}.get(kind, FULL_COLS)
     if fmt == "xlsx":
         from openpyxl import Workbook
         from openpyxl.styles import Font

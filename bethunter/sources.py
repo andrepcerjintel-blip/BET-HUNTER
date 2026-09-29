@@ -229,7 +229,7 @@ def ytdlp_videos(username, n=12):
 
 def fetch_video(url):
     """Legenda de um vídeo público (página -> JSON embutido; fallback oEmbed)."""
-    out = {"ok": False, "error": None, "desc": "", "author": "", "hashtags": [], "mentions": []}
+    out = {"ok": False, "error": None, "desc": "", "author": "", "hashtags": [], "mentions": [], "thumbnail": ""}
     r = net.fetch(url, timeout=15, allow_redirects=True)
     if not r["error"] and r["status"] == 200:
         scope = _rehydration(r["text"]) or {}
@@ -237,7 +237,8 @@ def fetch_video(url):
         if st:
             v = _video_from_item(st, (st.get("author") or {}).get("uniqueId", ""))
             out.update(ok=True, desc=v["desc"], hashtags=v["hashtags"], mentions=v["mentions"],
-                       author=(st.get("author") or {}).get("uniqueId", ""))
+                       author=(st.get("author") or {}).get("uniqueId", ""),
+                       thumbnail=(st.get("video") or {}).get("cover") or (st.get("video") or {}).get("originCover") or "")
             return out
     o = net.fetch("https://www.tiktok.com/oembed", params={"url": url}, timeout=15, allow_redirects=True)
     if not o["error"] and o["status"] == 200:
@@ -245,7 +246,7 @@ def fetch_video(url):
             j = json.loads(o["text"])
             desc = j.get("title") or ""
             out.update(ok=True, desc=desc, hashtags=extract_hashtags(desc), mentions=extract_mentions(desc),
-                       author=(j.get("author_unique_id") or ""))
+                       author=(j.get("author_unique_id") or ""), thumbnail=j.get("thumbnail_url") or "")
             return out
         except ValueError:
             pass

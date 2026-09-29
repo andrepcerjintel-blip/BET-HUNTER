@@ -4,7 +4,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const jq = s => esc(JSON.stringify(String(s ?? '')));  // literal JS seguro dentro de atributo HTML
 const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : '';
 const NI = 'NÃO IDENTIFICADO';
-const STATUSES = ['NOVO','REVISAR','CONFIRMADO','DESCARTADO','DUPLICADO','PERFIL INDISPONÍVEL','CONTEÚDO REMOVIDO','JÁ ENCAMINHADO'];
+const STATUSES = ['NOVO','REVISAR','CONFIRMADO','DESCARTADO','BAIXA RELEVÂNCIA','DUPLICADO','PERFIL INDISPONÍVEL','CONTEÚDO REMOVIDO','JÁ ENCAMINHADO'];
 const SOURCES = [['ddg','DuckDuckGo'],['bing','Bing'],['tiktok','TikTok Search'],['tiktok_tag','TikTok Hashtag']];
 const S = {view:'results', filters:{}, page:1, per:50, sort:'priority', items:[], total:0, sel:new Set(), cur:-1, facets:{}, settings:null};
 
@@ -44,9 +44,9 @@ const lines = t => (t || '').split('\n').map(x => x.trim()).filter(Boolean);
 async function loadStats() {
   const s = await api('/api/stats');
   const c = (n, l, cls = '') => `<div class="card ${cls}"><div class="n">${n}</div><div class="l">${l}</div></div>`;
-  $('#panel').innerHTML = c(s.total, 'Total coletado') + c(s.alta, 'Alta probabilidade', 'alta') + c(s.revisar, 'Revisar', 'rev') +
-    c(s.descartados, 'Descartados') + c(s.confirmados, 'Confirmados', 'conf') + c(s.duplicados, 'Duplicados evitados') +
-    c(s.dominios, 'Domínios identificados') + c(s.clusters, 'Clusters identificados') +
+  $('#panel').innerHTML = c(s.brutos, 'Resultados brutos') + c(s.unicos, 'Candidatos únicos') + c(s.alta, 'Alta probabilidade', 'alta') +
+    c(s.em_revisao, 'Em revisão', 'rev') + c(s.confirmados, 'Confirmados', 'conf') + c(s.descartados, 'Descartados') +
+    c(s.baixa, 'Baixa relevância (oculta)') + c(s.dominios, 'Domínios identificados') + c(s.clusters, 'Clusters identificados') +
     `<div class="card" style="grid-column:span 2"><div class="l">Meta ${s.mission.meta} · confirmados ${s.mission.confirmados}</div><div class="bar" style="margin-top:8px"><i style="width:${s.mission.progresso * 100}%"></i></div><div class="l" style="margin-top:4px">restam ${s.mission.restantes} · em revisão ${s.mission.em_revisao}</div></div>`;
   $('#pendCount').textContent = s.pendentes || '';
   return s;
@@ -214,7 +214,7 @@ async function showDetail(id, host) {
    <div class="filters"><button onclick="openUrl(${jq(d.profile_url)})">ABRIR PERFIL</button><button ${d.video_url ? '' : 'disabled'} onclick="openUrl(${jq(d.video_url)})">ABRIR VÍDEO</button>
      <button class="ok" onclick="detailSt(${d.id},'CONFIRMADO')">CONFIRMAR</button><button class="bad" onclick="detailSt(${d.id},'DESCARTADO')">DESCARTAR</button>
      <button onclick="detailSt(${d.id},'REVISAR')">REVISAR</button><button onclick="detailSt(${d.id},'JÁ ENCAMINHADO')">JÁ ENCAMINHADO</button>
-     <button onclick="reanalyze(${d.id})">REANALISAR (coleta de novo)</button><button onclick="expandId(${d.id})">ENCONTRAR PERFIS RELACIONADOS</button>
+     <button onclick="reanalyze(${d.id})">REANALISAR (coleta de novo)</button><button onclick="expandId(${d.id})">EXPANDIR ESTE PERFIL</button><button onclick="runVisual(${d.id})">ANALISAR VISUAL</button>
      <select onchange="detailSt(${d.id},this.value)">${STATUSES.map(s => `<option ${s === d.status ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
    <div class="grid2"><div>${reasonsHtml(d)}
      <h3>Evidência principal</h3><div class="box">${esc(d.main_evidence || NI)}</div>
@@ -222,7 +222,7 @@ async function showDetail(id, host) {
       <div>BIO</div><div>${esc(d.bio || NI)}</div><div>LINK_BIO</div><div>${esc(d.bio_link || NI)}</div><div>PLATAFORMA</div><div>${esc((d.platforms || []).join(', ') || NI)}</div>
       <div>JOGO</div><div>${esc((d.games || []).join(', ') || NI)}</div><div>CÓDIGO PROMO</div><div>${esc((d.codes || []).join(', ') || NI)}</div><div>AFFILIATE_ID</div><div>${esc((d.affiliate_ids || []).join(', ') || NI)}</div>
       <div>HASHTAGS</div><div>${esc((d.hashtags || []).map(h => '#' + h).join(' ') || NI)}</div><div>FONTES</div><div>${esc((d.sources || []).join(', ') || NI)}</div>
-      <div>STATUS PERFIL</div><div>${esc(d.profile_status)}</div><div>1ª COLETA</div><div>${esc(fmtDate(d.first_seen))}</div></div>
+      <div>VISUAL_ANALYSIS</div><div>${esc(d.visual_analysis || 'não disponível')}${(d.visuals || []).map(v => `<div class="mut">${esc(v.engine)}: ${Object.entries(v.signals).filter(([, x]) => x).map(([k, x]) => k + (x === true ? '' : '=' + x)).join(', ') || 'sem sinais'}</div>`).join('')}</div><div>STATUS PERFIL</div><div>${esc(d.profile_status)}</div><div>1ª COLETA</div><div>${esc(fmtDate(d.first_seen))}</div></div>
      <h3>Recursivo — transformar indicador em busca</h3><div>${d.indicators.map(x => `<button class="sm" onclick="searchInd(${jq(x.tipo)},${jq(x.valor)})">BUSCAR ${esc(x.tipo.toUpperCase())}: ${esc(clip(x.valor, 30))}</button> `).join('') || '<span class="mut">sem indicadores</span>'}</div>
      <h3>Clusters</h3><div>${d.clusters.map(c => `<button class="sm" onclick="closeModals();S.filters={cluster:${jq(c.tipo + ':' + c.valor)}};setView('results')">${esc(c.tipo)}: ${esc(c.valor)}</button> `).join('') || '<span class="mut">—</span>'}</div>
      <h3>Observação do analista</h3><textarea id="dNote" placeholder="OBSERVAÇÃO_ANALISTA (preservada nas exportações)">${esc(d.analyst_note)}</textarea>
@@ -250,20 +250,53 @@ async function saveManual(id) {
     toast(r.novo ? 'Evidência registrada' : 'Evidência já existia'); showDetail(id); loadStats(); if (S.view !== 'export') loadResults?.();
   } catch (e) { toast('⚠ ' + e.message, 5000); }
 }
+async function runVisual(id) { toast('Analisando thumbnails…'); const r = await api(`/api/candidates/${id}/visual`, {method: 'POST', json: {}}); toast(`VISUAL_ANALYSIS: ${r.status}`); showDetail(id); }
 async function saveNote(id) { await api(`/api/candidates/${id}/note`, {json: {note: $('#dNote').value}}); toast('Observação salva'); }
 async function detailSt(id, st) { const note = $('#dNote') ? $('#dNote').value : undefined; try { await api(`/api/candidates/${id}/status`, {json: {status: st, note}}); toast(st); showDetail(id); loadStats(); if ($('#tb')) loadResults(); } catch (e) { toast('⚠ ' + e.message, 6000); } }
 async function reanalyze(id) { toast('Coletando…'); const r = await api(`/api/candidates/${id}/reanalyze`, {method: 'POST', json: {}}); toast(r.profile_fetched ? 'Reanalisado' : `Perfil não coletado: ${r.profile_error || ''}`, 5000); showDetail(id); loadStats(); }
 
 /* ------------------------------------------------------------ jobs */
+function missionPanel(j) {
+  const s = j.stats || {}; if (s.consultas_total === undefined) return '';
+  const row = (k, v) => `<div>${k}</div><div><b>${esc(v)}</b></div>`;
+  return `<div style="font-weight:700;color:var(--warn)">${j.status === 'running' ? 'BUSCA EM EXECUÇÃO' : 'BUSCA ' + (j.cancelled ? 'INTERROMPIDA' : 'CONCLUÍDA')}</div>
+   <div class="mstat">${row('Consulta atual', s.consulta_atual || '—')}${row('Consultas', `${s.consultas_feitas} / ${s.consultas_total}`)}${row('Resultados brutos', s.brutos)}
+   ${row('Candidatos únicos', s.unicos)}${row('Alta probabilidade', s.alta)}${row('Em revisão', s.em_revisao)}${row('Confirmados', `${s.confirmados} / ${s.meta}`)}
+   ${row('Descartados', s.descartados)}${row('Clusters', s.clusters)}${row('Fontes', (s.fontes_ativas || []).join(', ') + ((s.fontes_pausadas || []).length ? ' · pausadas: ' + s.fontes_pausadas.join(', ') : ''))}
+   ${s.motivo_fim ? row('Encerrada', s.motivo_fim) : ''}</div>`;
+}
 async function trackJob(jobId, onDone) {
   const p = $('#jobPanel'); p.classList.remove('hidden');
   for (;;) {
     const j = await api(`/api/jobs/${jobId}`);
+    const mp = missionPanel(j);
     p.innerHTML = `<b>${esc(j.label)}</b> <span class="mut">${j.status} · ${j.elapsed}s</span> <button class="sm" style="float:right" onclick="$('#jobPanel').classList.add('hidden')">✕</button>
-      <div class="bar" style="margin-top:6px"><i style="width:${j.total ? j.done / j.total * 100 : (j.status === 'running' ? 8 : 100)}%"></i></div><pre>${esc(j.lines.join('\n'))}${j.error ? '\n⚠ ' + esc(j.error) : ''}</pre>`;
+      ${j.status === 'running' && mp ? `<button class="sm bad" style="float:right;margin-right:6px" onclick="api('/api/jobs/${j.id}/cancel',{json:{}});toast('Interrompendo…')">INTERROMPER</button>` : ''}
+      <div class="bar" style="margin-top:6px"><i style="width:${j.total ? j.done / j.total * 100 : (j.status === 'running' ? 8 : 100)}%"></i></div>${mp}<pre>${esc(j.lines.join('\n'))}${j.error ? '\n⚠ ' + esc(j.error) : ''}</pre>`;
+    if (mp) { loadStats(); if ($('#tb') && j.status === 'running') loadResults(); }
     if (j.status !== 'running') { loadStats(); if ($('#tb')) loadResults(); onDone && onDone(j); return j; }
     await new Promise(r => setTimeout(r, 900));
   }
+}
+async function openMission() {
+  const s = S.settings = await api('/api/settings');
+  const m = modal(`<h2>INICIAR MISSÃO</h2><p class="mut">Busca continuamente (matriz de consultas + caças + expansão dos candidatos encontrados) até atingir a meta de confirmados, formar um pool de ≈ meta × ${s.pool_factor} candidatos qualificados, esgotar as consultas ou você interromper. A meta acompanha o fluxo de análise: <b>nada é confirmado automaticamente</b>.</p>
+   <div class="filters">META <input id="mGoal" type="number" value="${s.goal}" style="width:80px"> PROFUNDIDADE
+     <select id="mDepth">${[0, 1, 2, 3].map(d => `<option ${d === s.mission_depth ? 'selected' : ''}>${d}</option>`).join('')}</select>
+     MODO <select id="mMode"><option value="rapido" ${s.mission_mode === 'rapido' ? 'selected' : ''}>RÁPIDO (texto, bio, URL, domínio, score)</option><option value="completo" ${s.mission_mode === 'completo' ? 'selected' : ''}>COMPLETO (+ redirecionamentos, perfis, páginas, visual)</option></select></div>
+   <div class="filters">${SOURCES.map(([k, n]) => `<label class="i"><input type="checkbox" class="mSrc" value="${k}" ${(s.mission_sources || []).includes(k) ? 'checked' : ''}>${n}</label>`).join('')}</div>
+   <button class="mission-btn" id="mGo">▶ INICIAR</button>`, 'sm');
+  $('#mGo', m).onclick = async () => {
+    const r = await api('/api/mission/start', {json: {goal: +$('#mGoal', m).value, depth: +$('#mDepth', m).value, mode: $('#mMode', m).value, sources: [...m.querySelectorAll('.mSrc:checked')].map(c => c.value)}});
+    m.remove(); trackJob(r.job, j => j.result && toast(`Missão encerrada: ${j.result.motivo}`, 10000));
+  };
+}
+function openExportConfirmed() {
+  modal(`<h2>EXPORTAR CONFIRMADOS</h2><p class="mut">Somente perfis confirmados pelo analista (inclui JÁ ENCAMINHADO).</p><div class="filters">
+   <a class="btn" style="font-size:14px;padding:8px 14px" href="/api/export?format=csv&kind=mission&scope=confirmed">CSV DA MISSÃO</a>
+   <a class="btn" style="font-size:14px;padding:8px 14px" href="/api/export?format=xlsx&kind=mission&scope=confirmed">XLSX DA MISSÃO</a></div>
+   <div class="mut" style="margin-top:8px">NUMERO, USERNAME, URL_PERFIL, URL_VIDEO, DESCRICAO_EVIDENCIA, TEXTO_EVIDENCIA, PLATAFORMA, DOMINIO, URL_EXTERNA, CODIGO_AFILIADO, DATA_COLETA, OBSERVACAO_ANALISTA</div>
+   <h3>Arquivo completo (todos os campos)</h3><div class="filters"><a class="btn" href="/api/export?format=csv&kind=full&scope=confirmed">CSV COMPLETO</a><a class="btn" href="/api/export?format=xlsx&kind=full&scope=confirmed">XLSX COMPLETO</a><a class="btn" href="/api/export?format=json&kind=full&scope=confirmed">JSON</a></div>`, 'sm');
 }
 async function searchInd(tipo, valor) {
   const r = await api('/api/search/indicator', {json: {tipo, valor}}); toast(`Buscando ${tipo}: ${valor}`);
@@ -421,7 +454,7 @@ async function renderMission() {
    <div><div class="num">${m.total_coletado}</div><div class="mut">TOTAL COLETADO</div></div><div><div class="num">${m.pendentes}</div><div class="mut">PENDENTES DE VALIDAÇÃO</div></div></div>
    <div class="box">${m.taxa_confirmacao != null ? `Taxa de confirmação observada: <b>${(m.taxa_confirmacao * 100).toFixed(0)}%</b>. ` : 'Taxa de confirmação: dados insuficientes (confirme/descarte ao menos 5 itens). '}
    ${m.restantes ? `Para fechar a meta, estime coletar ≈ <b>${m.candidatos_adicionais_estimados}</b> candidatos adicionais além dos ${m.em_revisao} em revisão.` : '<b>Meta atingida.</b>'} A coleta não para ao chegar em ${m.meta}: colete além para compensar falsos positivos, duplicidades e perfis indisponíveis.</div>
-   <div class="filters"><button class="review" onclick="startReview()">▶ MODO REVISÃO RÁPIDA</button><button onclick="runHunts()">EXECUTAR CAÇAS HABILITADAS</button></div>
+   <div class="filters"><button class="mission-btn" onclick="openMission()">▶ INICIAR MISSÃO</button><button class="review" onclick="startReview()">▶ REVISÃO ULTRARRÁPIDA</button><button onclick="runHunts()">EXECUTAR CAÇAS HABILITADAS</button></div>
    <p class="mut">Acompanhamento operacional apenas.</p></div>`;
 }
 async function saveGoal() { await api('/api/settings', {method: 'PUT', json: {goal: +$('#goal').value}}); renderMission(); loadStats(); }
@@ -450,10 +483,11 @@ async function renderConfig() {
    <h3>Limites de classificação</h3><div class="filters">ALTA PROBABILIDADE ≥ <input id="tAlta" type="number" value="${s.thresholds.alta}" style="width:70px"> REVISAR ≥ <input id="tRev" type="number" value="${s.thresholds.revisar}" style="width:70px"> (abaixo: BAIXA RELEVÂNCIA)</div>
    <h3>Pesos do score</h3><div class="wgrid">${Object.keys(s.weights).map(k => `<label>${WLABEL[k] || k}<input type="number" data-w="${k}" value="${s.weights[k]}"></label>`).join('')}</div>
    <h3>Operação</h3><div class="filters">Meta <input id="cGoal" type="number" value="${s.goal}" style="width:80px"> Cache (dias) <input id="cCache" type="number" value="${s.cache_days}" style="width:60px"> Intervalo entre consultas (s) <input id="cDelay" type="number" step="0.1" value="${s.request_delay}" style="width:70px"> Máx. perfis enriquecidos por busca <input id="cEnr" type="number" value="${s.enrich_max}" style="width:70px"></div>
-   <div class="filters"><label class="i"><input type="checkbox" id="cAuto" ${s.auto_discard_low ? 'checked' : ''}>marcar BAIXA RELEVÂNCIA como DESCARTADO automaticamente (nunca apaga)</label><label class="i"><input type="checkbox" id="cRes" ${s.resolve_links ? 'checked' : ''}>resolver redirecionamentos de links</label><label class="i"><input type="checkbox" id="cEnrich" ${s.enrich_after_search ? 'checked' : ''}>coletar perfil dos novos após buscas</label></div>
+   <div class="filters"><label class="i"><input type="checkbox" id="cAuto" ${s.auto_discard_low ? 'checked' : ''}>marcar BAIXA RELEVÂNCIA como DESCARTADO automaticamente (padrão: desligado; nunca apaga)</label><label class="i"><input type="checkbox" id="cRes" ${s.resolve_links ? 'checked' : ''}>resolver redirecionamentos de links</label><label class="i"><input type="checkbox" id="cEnrich" ${s.enrich_after_search ? 'checked' : ''}>coletar perfil dos novos após buscas</label></div>
    <div class="grid2"><div>${ta('cGames', s.games, 'Jogos (um por linha; apelidos com “|”)')}${ta('cHash', s.hashtags, 'Hashtags de descoberta')}</div>
    <div>${ta('cPlat', s.platforms, 'Plataformas (Nome|dominio1,dominio2)')}${ta('cDom', s.bet_domains, 'Domínios de apostas conhecidos')}</div></div>
    <div class="grid2"><div>${ta('cAgg', s.aggregators, 'Agregadores de links')}</div><div>${ta('cGen', s.generic_games, 'Termos de jogo genéricos (não bastam p/ “gameplay”)')}</div></div>
+   <h3>Matriz de consultas (Grupos A–D; a missão combina A+B, A+C, B+C, A+D, B+D)</h3><div class="grid2"><div>${ta('mxA', s.matrix.A, 'A — jogos')}${ta('mxC', s.matrix.C, 'C — financeiro')}</div><div>${ta('mxB', s.matrix.B, 'B — CTA')}${ta('mxD', s.matrix.D, 'D — afiliados')}</div></div>
    <h3>Léxicos avançados (JSON — sobrescreve listas padrão por chave: cta, payment, bonus, group, expressions, bet_terms, fp_*)</h3><textarea id="cLex" style="min-height:70px">${esc(JSON.stringify(s.lexicons || {}, null, 1))}</textarea>
    <div class="filters" style="margin-top:10px"><button class="primary" onclick="saveConfig(false)">SALVAR</button><button onclick="saveConfig(true)">SALVAR E REANALISAR TUDO</button></div>`;
 }
@@ -463,7 +497,8 @@ async function saveConfig(re) {
   const body = {weights: w, thresholds: {alta: +$('#tAlta').value, revisar: +$('#tRev').value}, goal: +$('#cGoal').value, cache_days: +$('#cCache').value,
     request_delay: +$('#cDelay').value, enrich_max: +$('#cEnr').value, auto_discard_low: $('#cAuto').checked, resolve_links: $('#cRes').checked, enrich_after_search: $('#cEnrich').checked,
     games: lines($('#cGames').value), hashtags: lines($('#cHash').value).map(h => h.replace(/^#/, '')), platforms: lines($('#cPlat').value), bet_domains: lines($('#cDom').value),
-    aggregators: lines($('#cAgg').value), generic_games: lines($('#cGen').value), lexicons: lex};
+    aggregators: lines($('#cAgg').value), generic_games: lines($('#cGen').value), lexicons: lex,
+    matrix: {A: lines($('#mxA').value), B: lines($('#mxB').value), C: lines($('#mxC').value), D: lines($('#mxD').value)}};
   const r = await api('/api/settings' + (re ? '?reanalyze=1' : ''), {method: 'PUT', json: body}); S.settings = r.settings;
   toast(re ? `Salvo. ${r.reanalisados} candidatos reanalisados.` : 'Configurações salvas'); loadStats();
 }
@@ -481,38 +516,62 @@ function xq(extra) { const sc = $('#xScope').value; const f = sc === 'filtered' 
 function dl(fmt, kind) { const sc = $('#xScope').value; window.location = `/api/export?${xq({format: fmt, kind, scope: sc === 'filtered' ? 'all' : sc})}`; }
 async function cp(what) { const sc = $('#xScope').value; const t = await api(`/api/copy?${xq({what, scope: sc === 'filtered' ? 'all' : sc})}`); $('#cpOut').value = t; await copyText(t); toast(`${t ? t.split('\n').length : 0} itens copiados`); }
 
-/* ------------------------------------------------------------ MODO REVISÃO RÁPIDA */
-const R = {ids: [], i: 0, done: 0};
+/* ------------------------------------------------------------ REVISÃO ULTRARRÁPIDA */
+const R = {ids: [], i: 0, done: 0, undo: [], showEv: false, cur: null};
 async function startReview() {
-  const q = await api('/api/queue?n=200'); if (!q.ids.length) return toast('Nada na fila de revisão (NOVO/REVISAR com evidência).');
-  R.ids = q.ids; R.i = 0; R.done = 0; R.total = q.total;
+  const q = await api('/api/queue?n=500'); if (!q.ids.length) return toast('Nada na fila de revisão (NOVO/REVISAR com evidência).');
+  Object.assign(R, {ids: q.ids, i: 0, done: 0, undo: [], total: q.total});
   const ov = document.createElement('div'); ov.className = 'review-ov'; document.body.appendChild(ov); reviewShow();
   document.addEventListener('keydown', reviewKey);
 }
 function endReview() { document.removeEventListener('keydown', reviewKey); $('.review-ov')?.remove(); loadStats(); if ($('#tb')) loadResults(); }
 async function reviewShow() {
   const ov = $('.review-ov'); if (!ov) return;
-  if (R.i >= R.ids.length) { ov.innerHTML = `<h2>Fila concluída ✔</h2><p>${R.done} itens decididos nesta sessão.</p><button onclick="endReview()">FECHAR</button>`; return; }
-  const d = await api(`/api/candidates/${R.ids[R.i]}`);
-  const evs = d.evidences.filter(e => e.kind !== 'relacao').slice(0, 6);
-  ov.innerHTML = `<div class="filters"><b>REVISÃO RÁPIDA</b><span class="mut">${R.i + 1}/${R.ids.length} · decididos ${R.done}</span><button class="sm" onclick="endReview()">sair (Esc)</button></div>
-   <div class="filters"><span class="bigscore ${d.score >= 70 ? 'neg' : ''}">${d.score}</span><div><h2 style="margin:0">@${esc(d.username)} <span class="tag">${esc(d.content_type)}</span> ${d.recurring ? '<span class="tag pp">PADRÃO RECORRENTE</span>' : ''}</h2><div class="mut">${esc(d.classification)} · ${esc(d.display_name || '')}</div></div></div>
-   <div class="big"><button class="ok" onclick="reviewAct('CONFIRMADO')">CONFIRMAR <kbd>C</kbd></button><button class="bad" onclick="reviewAct('DESCARTADO')">DESCARTAR <kbd>D</kbd></button><button onclick="reviewAct(null)">PULAR <kbd>S</kbd></button>
-    <button onclick="openUrl(${jq(d.profile_url)})">PERFIL <kbd>O</kbd></button><button ${d.video_url ? '' : 'disabled'} onclick="openUrl(${jq(d.video_url)})">VÍDEO <kbd>V</kbd></button><button ${d.link_final ? '' : 'disabled'} onclick="openUrl(${jq(d.link_final)})">LINK <kbd>L</kbd></button></div>
-   <div class="grid2"><div>${reasonsHtml(d)}<div class="box"><b>Evidência principal</b><br>${esc(d.main_evidence)}</div>
-     <div class="box"><b>BIO</b> ${esc(d.bio || NI)}<br><b>Plataforma</b> ${esc((d.platforms || []).join(', ') || NI)} · <b>Affiliate</b> ${esc((d.affiliate_ids || []).join(', ') || NI)} · <b>Código</b> ${esc((d.codes || []).join(', ') || NI)}</div>
-     <textarea id="rNote" placeholder="observação do analista (opcional)">${esc(d.analyst_note)}</textarea></div>
-    <div>${linksHtml(d)}<h3>Evidências</h3>${evs.map(e => `<div class="box"><span class="tag">${esc(e.kind)}</span> <span class="mut">${esc(e.data)} ${esc(e.hora)} · ${esc(e.source)}</span><div>${esc(clip(e.caption || e.text, 400))}</div>${e.url_video ? `<a href="${esc(safeUrl(e.url_video))}" target="_blank" rel="noopener">${esc(e.url_video)}</a>` : ''}</div>`).join('')}</div></div>`;
-  R.cur = d;
+  if (R.i >= R.ids.length) { ov.innerHTML = `<div class="rv"><h2>Fila concluída ✔</h2><p>${R.done} decididos nesta sessão. <span class="mut">Ctrl+Z desfaz a última ação.</span></p><button onclick="endReview()">FECHAR</button></div>`; R.cur = null; return; }
+  const d = await api(`/api/candidates/${R.ids[R.i]}`); R.cur = d;
+  const ev = d.evidences.filter(e => e.kind !== 'relacao');
+  const best = ev.find(e => e.url_video && (e.caption || e.text)) || ev[0];
+  const quote = (best && (best.caption || best.text)) || d.bio || NI;
+  const v = d.visuals && d.visuals.length ? ` · visual: ${Object.entries(d.visuals[0].signals).filter(([, x]) => x).map(([k]) => k).join(', ') || 'sem sinais'}` : '';
+  ov.innerHTML = `<div class="rv"><div class="filters"><b>REVISÃO ULTRARRÁPIDA</b><span class="mut">${R.i + 1}/${R.ids.length} · decididos ${R.done}</span><button class="sm" onclick="endReview()">sair (Esc)</button></div>
+   <div class="filters"><span class="bigscore ${d.score >= 70 ? 'neg' : ''}">SCORE: ${d.score}</span><div><h2 style="margin:0">@${esc(d.username)} <span class="tag">${esc(d.content_type)}</span> ${d.recurring ? '<span class="tag pp">PADRÃO RECORRENTE</span>' : ''}</h2><div class="mut">${esc(d.classification)} · ${esc(d.display_name || '')} · status ${esc(d.status)}</div></div></div>
+   <div class="line"><span class="k">PERFIL:</span><button class="sm" onclick="openUrl(${jq(d.profile_url)})">ABRIR</button> &nbsp; <span class="k" style="min-width:auto">VÍDEO:</span><button class="sm" ${d.video_url ? '' : 'disabled'} onclick="openUrl(${jq(d.video_url)})">ABRIR</button></div>
+   <div class="evq">${esc(clip(quote, 320))}</div>
+   <div class="line"><span class="k">LINK:</span>${d.link_final ? `<a href="${esc(safeUrl(d.link_final))}" target="_blank" rel="noopener noreferrer">${esc(clip(d.link_final, 90))}</a>` : NI}</div>
+   <div class="line"><span class="k">PLATAFORMA:</span>${esc((d.platforms || []).join(', ') || NI)} <span class="mut"> · DOMÍNIO ${esc(d.domain_final || NI)} · AFILIADO/CÓDIGO ${esc([...(d.affiliate_ids || []), ...(d.codes || [])].join(', ') || NI)}${esc(v)}</span></div>
+   <div class="line"><span class="k">MOTIVOS:</span>${d.reasons.map(r => `<span class="${r.pts > 0 ? 'pos' : 'neg'}">${r.pts > 0 ? '+' : ''}${r.pts}</span> ${esc(r.label.replace('link externo para plataforma relacionada a aposta', 'link').replace('link com parâmetro de afiliado', 'afiliado'))}`).join(' &nbsp;·&nbsp; ')}</div>
+   <div class="big"><button class="ok" onclick="reviewAct('CONFIRMADO')">CONFIRMAR <kbd>C</kbd></button><button class="bad" onclick="reviewAct('DESCARTADO')">DESCARTAR <kbd>D</kbd></button><button onclick="reviewAct(null)">PRÓXIMO <kbd>S</kbd></button>
+     <button onclick="R.showEv=!R.showEv;reviewShow()">EVIDÊNCIAS <kbd>E</kbd></button><button onclick="reviewExpand()">EXPANDIR <kbd>X</kbd></button></div>
+   ${R.showEv ? `<div class="grid2"><div>${reasonsHtml(d)}</div><div>${linksHtml(d)}${ev.slice(0, 8).map(e => `<div class="box"><span class="tag">${esc(e.kind)}</span> <span class="mut">${esc(e.data)} ${esc(e.hora)} · ${esc(e.source)}</span><div>${esc(clip(e.caption || e.text, 400))}</div>${e.url_video ? `<a href="${esc(safeUrl(e.url_video))}" target="_blank" rel="noopener">${esc(e.url_video)}</a>` : ''}</div>`).join('')}</div></div>` : ''}
+   <textarea id="rNote" placeholder="observação (opcional) — Esc sai do campo" style="min-height:44px">${esc(d.analyst_note)}</textarea>
+   <div class="keys"><kbd>C</kbd> confirmar · <kbd>D</kbd> descartar · <kbd>S</kbd> próximo · <kbd>E</kbd> evidências · <kbd>X</kbd> expandir · <kbd>O</kbd>/<kbd>V</kbd>/<kbd>L</kbd> perfil/vídeo/link · <kbd>Ctrl+Z</kbd> desfazer</div></div>`;
 }
 async function reviewAct(st) {
-  if (st) { try { await api(`/api/candidates/${R.cur.id}/status`, {json: {status: st, note: $('#rNote')?.value}}); R.done++; } catch (e) { return toast('⚠ ' + e.message, 5000); } }
+  const d = R.cur; if (!d) return;
+  if (st) {
+    try {
+      const note = $('#rNote')?.value; R.undo.push({id: d.id, status: d.status, manual: !!d.status_manual, index: R.i, note: d.analyst_note});
+      await api(`/api/candidates/${d.id}/status`, {json: {status: st, note}}); R.done++;
+    } catch (e) { R.undo.pop(); return toast('⚠ ' + e.message, 5000); }
+  }
   R.i++; reviewShow();
 }
+async function reviewUndo() {
+  const u = R.undo.pop(); if (!u) return toast('Nada para desfazer');
+  await api(`/api/candidates/${u.id}/restore`, {json: {status: u.status, manual: u.manual}}); await api(`/api/candidates/${u.id}/note`, {json: {note: u.note || ''}});
+  R.done = Math.max(0, R.done - 1); R.i = u.index; toast('Desfeito'); reviewShow();
+}
+async function reviewExpand() {
+  if (!R.cur) return; const r = await api('/api/expand', {json: {id: R.cur.id}}); toast('Expansão em segundo plano'); trackJob(r.job, j => j.result && j.result.ok && toast(`Expansão de @${j.result.seed}: ${j.result.menções_novas.length + j.result.novos_por_busca} novos`, 6000));
+}
 function reviewKey(e) {
-  if (!$('.review-ov')) return; if (document.activeElement.tagName === 'TEXTAREA') { if (e.key === 'Escape') document.activeElement.blur(); return; }
+  if (!$('.review-ov')) return;
+  if (document.activeElement.tagName === 'TEXTAREA') { if (e.key === 'Escape') document.activeElement.blur(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); return reviewUndo(); }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
   if (k === 'c') reviewAct('CONFIRMADO'); else if (k === 'd') reviewAct('DESCARTADO'); else if (k === 's') reviewAct(null);
+  else if (k === 'e') { R.showEv = !R.showEv; reviewShow(); } else if (k === 'x') reviewExpand();
   else if (k === 'o') openUrl(R.cur?.profile_url); else if (k === 'v') openUrl(R.cur?.video_url); else if (k === 'l') openUrl(R.cur?.link_final);
   else if (k === 'escape') endReview();
 }

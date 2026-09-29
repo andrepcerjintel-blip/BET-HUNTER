@@ -48,6 +48,11 @@ def analyze(bundle, settings):
     all_norm = norm(all_text)
     bet_ctx = extract.bet_context(ex)
     tags = {t for e in ev for t in e.get("tags", [])}
+    vis = [v["signals"] for v in bundle.get("visuals", [])]
+    vis_game = next((k for s in vis for k in ("slot_ui", "roulette", "aviator", "mines", "tigrinho") if s.get(k)), None)
+    vis_logo = next((s["platform_logo"] for s in vis if s.get("platform_logo")), None)
+    vis_pay = next((k for s in vis for k in ("withdraw", "pix") if s.get(k)), None)
+    vis_code = next((s["promo_code"] for s in vis if s.get("promo_code")), None)
 
     # ---------- links ----------
     bet_terms_page = extract.lexicon(settings, "bet_terms")
@@ -82,8 +87,8 @@ def analyze(bundle, settings):
         add("cta", "CTA explícito", f"\"{ex['cta'][0]}\"")
 
     # ---------- gameplay ----------
-    gameplay = "gameplay" in tags
-    gp_detail = "marcado pelo analista" if gameplay else ""
+    gameplay = "gameplay" in tags or bool(vis_game)
+    gp_detail = "marcado pelo analista" if "gameplay" in tags else (f"visual: {vis_game}" if vis_game else "")
     if not gameplay:
         for e in ev:
             if e["kind"] in VIDEO_KINDS or e.get("url_video"):
@@ -96,15 +101,18 @@ def analyze(bundle, settings):
         add("gameplay", "vídeo demonstrando jogo/aposta", gp_detail)
 
     # ---------- plataforma (nome/logo em conteúdo) ----------
-    plat = ex["platforms"]
+    plat = list(ex["platforms"])
+    if vis_logo and vis_logo.lower() not in [p.lower() for p in plat]:
+        plat.append(vis_logo)
     if plat or "logomarca" in tags:
-        add("platform", "nome/logomarca de plataforma", ", ".join(plat) if plat else "logomarca (analista)")
+        add("platform", "nome/logomarca de plataforma",
+            (", ".join(plat) + (" (logomarca visual)" if vis_logo else "")) if plat else "logomarca (analista)")
 
     # ---------- pagamento ----------
     pay = bool(ex["payment"]) and (bet_ctx or link_bet)
-    if pay or "saque_demonstrado" in tags:
+    if pay or "saque_demonstrado" in tags or vis_pay:
         add("payment", "promessa/demonstração de saque ou pagamento",
-            f"\"{ex['payment'][0]}\"" if ex["payment"] else "marcado pelo analista")
+            f"\"{ex['payment'][0]}\"" if pay and ex["payment"] else (f"visual: {vis_pay}" if vis_pay else "marcado pelo analista"))
 
     # ---------- afiliado ----------
     aff = bool(aff_params) and (link_bet or bet_ctx)
@@ -118,7 +126,9 @@ def analyze(bundle, settings):
     for p, _ in code_params:
         if p["value"] not in codes:
             codes.append(p["value"])
-    bonus = bool(ex["bonus"] or codes) and (bet_ctx or link_bet)
+    if vis_code and vis_code not in codes:
+        codes.append(vis_code)
+    bonus = bool(ex["bonus"] or codes) and (bet_ctx or link_bet or bool(vis_game))
     if bonus:
         add("bonus_code", "bônus, cupom ou código promocional",
             f"código {codes[0]}" if codes else f"\"{ex['bonus'][0]}\"")
@@ -249,7 +259,9 @@ def analyze(bundle, settings):
         priority = 4
 
     raw = sum(r["pts"] for r in reasons)
-    return {
+    manual_vis = bool(tags & {"gameplay", "logomarca", "saque_demonstrado"})
+    visual_status = "disponível" if vis else ("manual" if manual_vis else "não disponível")
+    return {"visual_analysis": visual_status,
         "raw": raw, "reasons": reasons, "content_type": ctype, "priority": priority, "recurring": recurring,
         "platforms": plat, "games": ex["games"], "hashtags": ex["hashtags"], "codes": codes,
         "affiliate_ids": aff_ids, "mentions": ex["mentions"], "main_evidence": main,

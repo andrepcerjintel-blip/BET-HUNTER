@@ -72,7 +72,15 @@ CREATE TABLE IF NOT EXISTS search_log(
   error_msg TEXT DEFAULT '', duration_ms INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS visuals(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+  url_video TEXT, thumb_url TEXT, engine TEXT, signals TEXT DEFAULT '{}', text TEXT DEFAULT '', collected_at TEXT,
+  UNIQUE(candidate_id, url_video)
+);
 """
+
+MIGRATIONS = [("candidates", "visual_analysis", "TEXT DEFAULT 'não disponível'")]
 
 
 def _path():
@@ -100,6 +108,16 @@ def connect(path=None):
 def init_db(path=None):
     with connect(path) as c:
         c.executescript(SCHEMA)
+        for tbl, col, ddl in MIGRATIONS:
+            if col not in [r[1] for r in c.execute(f"PRAGMA table_info({tbl})")]:
+                c.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {ddl}")
+        if not c.execute("SELECT 1 FROM settings WHERE key='migrated_v2'").fetchone():
+            # regra antiga (auto-descartar) -> nova: BAIXA RELEVÂNCIA sem decisão do analista
+            c.execute("UPDATE candidates SET status='BAIXA RELEVÂNCIA' WHERE status='DESCARTADO' AND status_manual=0")
+            c.execute("INSERT INTO settings(key,value) VALUES('migrated_v2','1')")
+        if not c.execute("SELECT 1 FROM hunts WHERE kind='matrix'").fetchone() and c.execute("SELECT 1 FROM hunts LIMIT 1").fetchone():
+            c.execute("INSERT INTO hunts(name,kind,queries,sources,enabled,position) VALUES(?,?,?,?,1,99)",
+                      (config.DEFAULT_HUNTS[-1][0], "matrix", "[]", json.dumps(config.DEFAULT_HUNT_SOURCES)))
         if not c.execute("SELECT 1 FROM hunts LIMIT 1").fetchone():
             for i, (name, kind, queries) in enumerate(config.DEFAULT_HUNTS):
                 c.execute("INSERT INTO hunts(name,kind,queries,sources,enabled,position) VALUES(?,?,?,?,1,?)",

@@ -4,7 +4,7 @@ import os
 
 from flask import Flask, Response, jsonify, render_template, request
 
-from . import db, exporter, pipeline, queries, sources
+from . import db, exporter, mission, pipeline, queries, sources, visual
 from .db import jl
 
 FILTER_KEYS = ["view", "min_score", "status", "classification", "platform", "domain", "game", "hashtag", "ev_type",
@@ -227,6 +227,44 @@ def create_app(db_path=None):
         job = pipeline.start_job(f"Buscar {b.get('tipo')}: {b.get('valor')}",
                                  lambda j: pipeline.indicator_search(b.get("tipo", ""), b.get("valor", ""), j))
         return jsonify({"ok": True, "job": job.id})
+
+    @app.post("/api/mission/start")
+    def api_mission_start():
+        b = body()
+        goal = max(1, int(b.get("goal", 200)))
+        depth = max(0, min(3, int(b.get("depth", 2))))
+        mode = b.get("mode", "rapido") if b.get("mode") in ("rapido", "completo") else "rapido"
+        with db.connect() as c:
+            s = db.save_settings(c, {"goal": goal, "mission_depth": depth, "mission_mode": mode,
+                                     "mission_sources": b.get("sources") or db.get_settings(c)["mission_sources"]})
+        job = pipeline.start_job(f"MISSÃO meta {goal} · profundidade {depth} · {mode.upper()}",
+                                 lambda j: mission.run_mission(j, goal, depth, mode, s["mission_sources"]))
+        return jsonify({"ok": True, "job": job.id})
+
+    @app.post("/api/jobs/<jid>/cancel")
+    def api_job_cancel(jid):
+        j = pipeline.JOBS.get(jid)
+        if not j:
+            return jsonify({"ok": False, "error": "job inexistente"}), 404
+        j.cancelled = True
+        return jsonify({"ok": True})
+
+    @app.post("/api/candidates/<int:cid>/restore")
+    def api_restore(cid):
+        """Desfazer (Ctrl+Z): devolve status e flag manual anteriores."""
+        b = body()
+        if b.get("status") not in pipeline.STATUSES:
+            return jsonify({"ok": False, "error": "status inválido"}), 400
+        with db.connect() as c:
+            c.execute("UPDATE candidates SET status=?, status_manual=? WHERE id=?", (b["status"], 1 if b.get("manual") else 0, cid))
+            pipeline.refresh_peers(c, cid, db.get_settings(c))
+        return jsonify({"ok": True})
+
+    @app.post("/api/candidates/<int:cid>/visual")
+    def api_visual(cid):
+        with db.connect() as c:
+            s = db.get_settings(c)
+        return jsonify({"ok": True, **visual.run_visual(cid, s, max_n=6)})
 
     @app.get("/api/manual-search-urls")
     def api_manual_urls():

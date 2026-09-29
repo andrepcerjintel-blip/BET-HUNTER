@@ -8,15 +8,16 @@ import threading
 import time
 import uuid
 
-from . import db, scoring, sources, urltools
+from . import db, extract, scoring, sources, urltools
 from .db import jd, jl
 from .util import (NAO_IDENTIFICADO, base_domain, canonical_video_url, clip, extract_urls, host_of, norm, now_iso,
                    normalize_username, parse_tiktok_url, profile_url, USERNAME_RE, URL_RE, extract_hashtags,
                    extract_mentions)
 
-STATUSES = ["NOVO", "REVISAR", "CONFIRMADO", "DESCARTADO", "DUPLICADO", "PERFIL INDISPONÍVEL",
+STATUSES = ["NOVO", "REVISAR", "CONFIRMADO", "DESCARTADO", "BAIXA RELEVÂNCIA", "DUPLICADO", "PERFIL INDISPONÍVEL",
             "CONTEÚDO REMOVIDO", "JÁ ENCAMINHADO"]
-INACTIVE = ("DESCARTADO", "DUPLICADO", "PERFIL INDISPONÍVEL", "CONTEÚDO REMOVIDO")
+UNRESOLVED = "não resolvido"
+INACTIVE = ("DESCARTADO", "BAIXA RELEVÂNCIA", "DUPLICADO", "PERFIL INDISPONÍVEL", "CONTEÚDO REMOVIDO")
 ORIGIN_LABELS = {"domínio": "domínio", "código": "link de afiliado", "hashtag": "hashtag", "plataforma": "menção"}
 
 REASON_TO_EVTYPE = {"link_bet": "link externo", "cta": "CTA", "gameplay": "gameplay", "platform": "plataforma",
@@ -68,23 +69,72 @@ def add_evidence(conn, cid, kind, *, source="", source_url="", query="", url_vid
     return cur.rowcount > 0
 
 
-def resolve_urls(urls, settings, known=()):
-    """Etapa de REDE (chamar fora de transação). -> {url: [registros de link]}"""
+def _cached_records(urls):
+    """Resoluções já feitas (qualquer candidato): evita repetir rede para a mesma URL."""
+    if not urls:
+        return {}
+    out = {}
+    with db.connect() as conn:
+        q = ",".join("?" * len(urls))
+        for l in conn.execute(f"SELECT * FROM links WHERE url_original IN ({q}) AND error NOT LIKE ?",
+                              (*urls, UNRESOLVED + "%")):
+            recs = out.setdefault(l["url_original"], [])
+            if not any(r["url_final"] == l["url_final"] for r in recs):
+                recs.append({"url_original": l["url_original"], "chain": jl(l["chain"]), "url_final": l["url_final"],
+                             "domain_final": l["domain_final"], "params": jl(l["params"]), "params_raw": l["params_raw"],
+                             "page_title": l["page_title"], "page_text": l["page_text"], "aggregator": l["aggregator"],
+                             "error": l["error"]})
+    return out
+
+
+def promising_text(text, settings):
+    """Score preliminar barato (só texto+URL): vale gastar rede/processamento neste resultado?"""
+    x = extract.extract_all(text, settings)
+    if any(p["type"] in ("affiliate", "referral") for u in x["urls"] for p in urltools.parse_params(u)):
+        return True
+    if any(urltools.bet_link_level({"domain_final": host_of(u)}, settings, []) in ("known", "hint_strong") for u in x["urls"]):
+        return True
+    return extract.bet_context(x) and bool(x["cta"] or x["payment"] or x["bonus"] or x["group"] or x["codes"])
+
+
+def resolve_urls(urls, settings, known=(), only=None):
+    """Etapa de REDE (chamar fora de transação). -> {url: [registros]}.
+    Reaproveita resoluções já existentes; só acessa a rede para URLs em `only` (candidatos promissores) quando informado."""
     out = {}
     known = set(known)
-    for u in urls:
-        if u in known or u in out:
-            continue
+    todo = [u for u in dict.fromkeys(urls) if u not in known]
+    cached = _cached_records(todo)
+    for u in todo:
         kind = urltools.domain_kind(host_of(u), settings)
         if kind == "tiktok" and not urltools.unwrap(u):
             continue
-        if not settings.get("resolve_links", True):
+        if u in cached:
+            out[u] = cached[u]
+        elif settings.get("resolve_links", True) and (only is None or u in only):
+            out[u] = urltools.expand_link(u, settings)
+        else:
             out[u] = [{"url_original": u, "chain": [], "url_final": u, "domain_final": host_of(u),
                        "params": urltools.parse_params(u), "params_raw": urltools.raw_query(u), "page_title": "",
-                       "page_text": "", "aggregator": "", "error": "não resolvido (desativado)"}]
-        else:
-            out[u] = urltools.expand_link(u, settings)
+                       "page_text": "", "aggregator": "", "error": UNRESOLVED + " (pré-score/modo rápido)"}]
     return out
+
+
+def deepen_links(cid, settings):
+    """Etapa 3 do processamento progressivo: só candidatos promissores resolvem a cadeia completa."""
+    with db.connect() as conn:
+        rows = conn.execute("SELECT DISTINCT url_original, origin FROM links WHERE candidate_id=? AND error LIKE ?",
+                            (cid, UNRESOLVED + "%")).fetchall()
+    if not rows:
+        return 0
+    origin = {r["url_original"]: r["origin"] for r in rows}
+    resolved = resolve_urls(list(origin), dict(settings, resolve_links=True))
+    with db.connect() as conn:
+        for u in origin:
+            conn.execute("DELETE FROM links WHERE candidate_id=? AND url_original=? AND error LIKE ?", (cid, u, UNRESOLVED + "%"))
+        for u, recs in resolved.items():
+            save_links(conn, cid, {u: recs}, origin[u], settings)
+        refresh_candidate(conn, cid, settings)
+    return len(origin)
 
 
 def save_links(conn, cid, resolved, origin, settings):
@@ -128,8 +178,10 @@ def load_bundle(conn, cid):
                       "chain": jl(l["chain"]), "url_final": l["url_final"], "domain_final": l["domain_final"],
                       "params": jl(l["params"]), "params_raw": l["params_raw"], "page_title": l["page_title"],
                       "page_text": l["page_text"], "aggregator": l["aggregator"], "error": l["error"]})
+    visuals = [{"url_video": v["url_video"], "engine": v["engine"], "signals": jl(v["signals"], {}), "text": v["text"]}
+               for v in conn.execute("SELECT * FROM visuals WHERE candidate_id=? ORDER BY id", (cid,))]
     return {"username": c["username"], "display_name": c["display_name"], "bio": c["bio"], "evidences": evs,
-            "links": links, "cand": c}
+            "links": links, "visuals": visuals, "cand": c}
 
 
 def _cluster_rows(bundle, res, settings):
@@ -194,14 +246,14 @@ def refresh_candidate(conn, cid, settings=None, cascade=True):
     conn.execute("""UPDATE candidates SET base_raw=?, score_base=?, base_reasons=?, flags=?, content_type=?, priority=?,
         recurring=?, platforms=?, games=?, hashtags=?, codes=?, affiliate_ids=?, domains=?, mentions=?, ev_types=?,
         video_url=?, link_original=?, link_final=?, domain_final=?, main_evidence=?, sources=?, evidence_count=?,
-        bio_link=?, last_analyzed=? WHERE id=?""",
+        bio_link=?, last_analyzed=?, visual_analysis=? WHERE id=?""",
                  (res["raw"], base_score, jd(res["reasons"]), jd(res["flags"]), res["content_type"], res["priority"],
                   int(res["recurring"]), jd(res["platforms"]), jd(res["games"]), jd(res["hashtags"]),
                   jd(res["codes"]), jd(res["affiliate_ids"]), jd(domains),
                   jd(sorted({m for e in b["evidences"] for m in e["mentions"]} | set(res["mentions"]))),
                   jd(ev_types), video_url, prim["url_original"] if prim else "", prim["url_final"] if prim else "",
                   prim["domain_final"] if prim else "", res["main_evidence"], jd(sources_), len(ev_real), bio_link,
-                  now_iso(), cid))
+                  now_iso(), res["visual_analysis"], cid))
     conn.execute("DELETE FROM cluster_members WHERE candidate_id=?", (cid,))
     for tipo, valor, extra in _cluster_rows(b, res, settings):
         conn.execute("INSERT OR IGNORE INTO cluster_members(candidate_id,tipo,valor,extra) VALUES(?,?,?,?)",
@@ -258,7 +310,7 @@ def apply_auto_status(conn, cid, settings):
     elif c["evidence_count"] == 0:
         new = "NOVO"
     elif c["classification"].startswith("BAIXA"):
-        new = "DESCARTADO" if settings.get("auto_discard_low", True) else "NOVO"
+        new = "DESCARTADO" if settings.get("auto_discard_low", False) else "BAIXA RELEVÂNCIA"
     else:
         new = "REVISAR"
     if new != c["status"]:
@@ -338,6 +390,8 @@ def log_search(conn, hunt, query, source, found, new, dups, errors, msg, t0):
 
 def run_query(q, source, settings, hunt="", origin=None):
     """Executa UMA consulta em UMA fonte: rede -> ingestão -> log."""
+    from . import mission
+    q = mission.sanitize_query(q, settings)   # termo genérico nunca vai sozinho
     t0 = time.time()
     try:
         hits, err, _ = sources.run_source(source, q)
@@ -346,7 +400,11 @@ def run_query(q, source, settings, hunt="", origin=None):
     resolved = {}
     if hits:
         try:
-            resolved = resolve_urls(_ingest_urls(hits), settings)
+            with db.connect() as conn:  # duplicidade ANTES da análise pesada: vídeo já conhecido não é reprocessado
+                seen_vids = {r[0] for r in conn.execute("SELECT url_video FROM evidences WHERE url_video!=''")}
+            fresh = [h for h in hits if not (h["video_url"] and h["video_url"] in seen_vids)]
+            only = {u for h in fresh if promising_text(h["text"], settings) for u in extract_urls(h["text"])}
+            resolved = resolve_urls(_ingest_urls(fresh), settings, only=only)
         except Exception as e:
             err = (err or "") + f" (resolução de URLs: {e})"
     label = origin or sources.SOURCE_LABELS.get(source, source)
@@ -442,6 +500,12 @@ def investigate(target, *, force=False, source="perfil-semente", query="", expan
         res = {"ok": True, "cached": False, "id": cid, "is_new": is_new, "profile_fetched": prof["ok"],
                "profile_error": prof["error"], "videos_collected": len(vids), "score": row["score"],
                "classification": row["classification"], "evidence_count": row["evidence_count"]}
+    if res["score"] >= settings["thresholds"]["revisar"] and res["evidence_count"]:
+        from . import visual
+        res["visual"] = visual.run_visual(cid, settings)["status"]
+        with db.connect() as conn:
+            r2 = conn.execute("SELECT score, classification FROM candidates WHERE id=?", (cid,)).fetchone()
+            res["score"], res["classification"] = r2["score"], r2["classification"]
     if expand:
         res["expansion"] = expand_candidate(cid)
     return res
@@ -550,6 +614,9 @@ def _all_hunt_queries(conn, hunt, settings):
     """Consultas de uma caça: estáticas + dinâmicas (afiliados, domínios conhecidos)."""
     qs = [(q, None) for q in jl(hunt["queries"])]
     kind = hunt["kind"]
+    if kind == "matrix":
+        from . import mission
+        qs += [(q, None) for q in mission.generate_queries(settings)]
     if kind == "affiliate_links":
         seen = set()
         for r in conn.execute("SELECT params FROM links"):
@@ -768,6 +835,7 @@ class Job:
         self.label, self.status, self.total, self.done = label, "running", 0, 0
         self.lines, self.result, self.error = [], None, None
         self.started = time.time()
+        self.cancelled, self.stats = False, {}
 
     def log(self, msg):
         self.lines.append(msg)
@@ -780,7 +848,8 @@ class Job:
 
     def to_dict(self):
         return {"id": self.id, "label": self.label, "status": self.status, "total": self.total, "done": self.done,
-                "lines": self.lines[-40:], "result": self.result, "error": self.error,
+                "lines": self.lines[-40:], "result": self.result, "error": self.error, "stats": self.stats,
+                "cancelled": self.cancelled,
                 "elapsed": round(time.time() - self.started, 1)}
 
 

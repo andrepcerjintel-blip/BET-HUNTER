@@ -129,11 +129,11 @@ def test_cache_warning_and_force(env):
     assert pipeline.investigate("promo_fake1", force=True)["cached"] is False
 
 
-def test_news_profile_auto_discarded_not_deleted(env):
+def test_news_profile_becomes_low_relevance_not_discarded(env):
     r = pipeline.investigate("noticias_fake")
     with db.connect() as c:
         row = c.execute("SELECT * FROM candidates WHERE id=?", (r["id"],)).fetchone()
-    assert row["classification"].startswith("BAIXA") and row["status"] == "DESCARTADO"
+    assert row["classification"].startswith("BAIXA") and row["status"] == "BAIXA RELEVÂNCIA"
 
 
 def test_unavailable_profile_and_blocked_profile_are_pending(env):
@@ -255,7 +255,7 @@ def test_expand_mentions_and_related(env):
 def test_hunts_defaults_and_run(env):
     with db.connect() as c:
         hs = c.execute("SELECT * FROM hunts ORDER BY position").fetchall()
-        assert len(hs) == 12 and all(h["enabled"] for h in hs)
+        assert len(hs) == 13 and all(h["enabled"] for h in hs) and hs[-1]["kind"] == "matrix"
         c.execute("UPDATE hunts SET queries=?, sources=? WHERE id=1", (json.dumps(["Fortune Tiger"]), json.dumps(["ddg"])))
     job = pipeline.start_job("t", lambda j: pipeline.run_hunt(1, j), sync=True)
     assert job.status == "done" and job.result["new"] == 3 and job.result["enriched"] == 1
@@ -309,7 +309,8 @@ def test_priority_order_and_filters(env):
         assert queries.list_candidates(c, {"with_aff": "1", "view": "all"})["total"] == 1
         assert queries.list_candidates(c, {"game": "Fortune Tiger", "view": "all"})["total"] >= 1
         assert queries.list_candidates(c, {"source": "perfil-semente", "view": "all"})["total"] == 2
-        assert queries.list_candidates(c, {"status": "DESCARTADO", "view": "all"})["total"] == 1
+        assert queries.list_candidates(c, {"status": "BAIXA RELEVÂNCIA", "view": "all"})["total"] == 1
+        assert queries.list_candidates(c, {"view": "results"})["total"] == 1   # BAIXA oculta da revisão principal
 
 
 def test_stats_mission_metrics(env):
@@ -317,7 +318,8 @@ def test_stats_mission_metrics(env):
     with db.connect() as c:
         pipeline.set_status(c, 1, "CONFIRMADO")
         st = queries.stats(c); ms = queries.mission(c); mt = queries.metrics(c)
-    assert st["total"] == 2 and st["confirmados"] == 1 and st["descartados"] == 1 and st["dominios"] == 1
+    assert st["total"] == 2 and st["confirmados"] == 1 and st["baixa"] == 1 and st["descartados"] == 0 and st["dominios"] == 1
+    assert st["unicos"] == 2 and st["brutos"] == 0
     assert ms["meta"] == 200 and ms["confirmados"] == 1 and ms["restantes"] == 199
     assert mt["taxa_confirmacao"] is None or 0 <= mt["taxa_confirmacao"] <= 1 and "jurídica" in mt["aviso"]
 

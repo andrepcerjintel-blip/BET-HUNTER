@@ -9,7 +9,7 @@ from .util import NAO_IDENTIFICADO, split_iso
 LIST_COLS = ("id,username,profile_url,display_name,status,score,classification,content_type,main_evidence,priority,"
              "recurring,platforms,games,hashtags,codes,affiliate_ids,domains,video_url,link_original,link_final,"
              "domain_final,sources,first_source,evidence_count,profile_status,analyst_note,first_seen,last_analyzed,"
-             "ev_types,flags,mentions")
+             "ev_types,flags,mentions,visual_analysis")
 
 
 def _like_json(col, val):
@@ -22,6 +22,8 @@ def build_where(f):
     view = f.get("view", "results")
     if view == "results":
         w.append("evidence_count>0")
+        if not f.get("status"):  # BAIXA RELEVÂNCIA fica fora da revisão principal (mas registrada)
+            w.append("status!='BAIXA RELEVÂNCIA'")
     elif view == "pending":
         w.append("evidence_count=0")
     if f.get("min_score") not in (None, ""):
@@ -114,6 +116,8 @@ def candidate_detail(conn, cid):
         "SELECT tipo, valor, extra FROM cluster_members WHERE candidate_id=?", (cid,))]
     # indicadores para busca recursiva
     s = db.get_settings(conn)
+    d["visuals"] = [{"url_video": v["url_video"], "engine": v["engine"], "signals": jl(v["signals"], {}),
+                     "text": v["text"]} for v in conn.execute("SELECT * FROM visuals WHERE candidate_id=?", (cid,))]
     d["indicators"] = [{"tipo": t, "valor": v, "consulta": q} for t, v, q in pipeline.indicator_queries(r, s)]
     d["total_score_bruto"] = r["base_raw"] + sum(x["pts"] for x in d["reasons"] if x["key"] == "shared_domain")
     return d
@@ -122,13 +126,18 @@ def candidate_detail(conn, cid):
 def stats(conn):
     one = lambda q, *a: conn.execute(q, a).fetchone()[0]
     s = db.get_settings(conn)
-    inactive = "status NOT IN ('DESCARTADO','DUPLICADO','PERFIL INDISPONÍVEL','CONTEÚDO REMOVIDO')"
+    inactive = "status NOT IN ('DESCARTADO','BAIXA RELEVÂNCIA','DUPLICADO','PERFIL INDISPONÍVEL','CONTEÚDO REMOVIDO')"
     dom = set()
     for (d,) in conn.execute("SELECT domains FROM candidates WHERE domains!='[]'"):
         dom.update(jl(d))
     dups_log = one("SELECT COALESCE(SUM(dups),0) FROM search_log")
     return {
         "total": one("SELECT COUNT(*) FROM candidates"),
+        "unicos": one("SELECT COUNT(*) FROM candidates"),
+        "brutos": one("SELECT COALESCE(SUM(found),0) FROM search_log"),
+        "baixa": one("SELECT COUNT(*) FROM candidates WHERE status='BAIXA RELEVÂNCIA'"),
+        "em_revisao": one("SELECT COUNT(*) FROM candidates WHERE status IN ('NOVO','REVISAR') AND evidence_count>0 "
+                          "AND classification NOT LIKE 'BAIXA%'"),
         "alta": one(f"SELECT COUNT(*) FROM candidates WHERE classification LIKE 'ALTA%' AND evidence_count>0 AND {inactive}"),
         "revisar": one("SELECT COUNT(*) FROM candidates WHERE status='REVISAR'"),
         "descartados": one("SELECT COUNT(*) FROM candidates WHERE status='DESCARTADO'"),
@@ -137,7 +146,8 @@ def stats(conn):
         "duplicados": dups_log + one("SELECT COUNT(*) FROM candidates WHERE status='DUPLICADO'"),
         "pendentes": one("SELECT COUNT(*) FROM candidates WHERE evidence_count=0"),
         "dominios": len(dom),
-        "clusters": len(clusters(conn, min_profiles=2)),
+        "clusters": one(f"SELECT COUNT(*) FROM (SELECT 1 FROM cluster_members cm JOIN candidates c ON c.id=cm.candidate_id "
+                        f"WHERE c.{inactive} GROUP BY cm.tipo, cm.valor HAVING COUNT(*)>=2)"),
         "goal": s["goal"],
     }
 
@@ -148,7 +158,7 @@ CLUSTER_LABEL = {"DOMINIO": "Domínio", "AGREGADOR": "Agregador", "PLATAFORMA": 
 
 def clusters(conn, min_profiles=2, tipo=None):
     q = ("SELECT cm.tipo, cm.valor, cm.extra, c.id, c.username, c.status, c.score, c.link_final FROM cluster_members cm "
-         "JOIN candidates c ON c.id=cm.candidate_id WHERE c.status NOT IN ('DUPLICADO')")
+         "JOIN candidates c ON c.id=cm.candidate_id WHERE c.status NOT IN ('DUPLICADO','BAIXA RELEVÂNCIA')")
     args = []
     if tipo:
         q += " AND cm.tipo=?"; args.append(tipo)

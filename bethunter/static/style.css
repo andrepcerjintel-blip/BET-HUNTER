@@ -62,3 +62,11 @@ kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2p
 .hunt.off{opacity:.55}
 label.i{display:inline-flex;align-items:center;gap:4px;margin-right:10px}
 .wgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px}.wgrid label{display:flex;justify-content:space-between;gap:6px;align-items:center}.wgrid input{width:70px}
+
+button.mission-btn{background:#d29922;border-color:#d29922;color:#000;font-weight:700}
+#jobPanel{z-index:90}
+#jobPanel .mstat{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:6px 0}#jobPanel .mstat div:nth-child(odd){color:var(--mut)}
+#jobPanel .mstat b{font-size:14px}
+.review-ov .rv{max-width:1100px;margin:0 auto}.rv .line{margin:6px 0;font-size:15px}.rv .line span.k{color:var(--mut);display:inline-block;min-width:100px}
+.rv .evq{font-size:17px;background:var(--panel2);border-left:4px solid var(--acc);padding:10px 14px;margin:8px 0;border-radius:4px}
+.rv .keys{color:var(--mut);margin-top:12px}

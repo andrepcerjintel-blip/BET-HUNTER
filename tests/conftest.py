@@ -86,6 +86,9 @@ def env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(net, "fetch", fake_fetch)
     monkeypatch.setattr("bethunter.sources.ytdlp_videos", lambda *a, **k: [])
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr("bethunter.visual.engine", lambda: None)
+    monkeypatch.setitem(__import__("bethunter.visual", fromlist=["x"])._warned, "done", False)
     with db.connect() as c:
         db.save_settings(c, {"request_delay": 0})
     return calls

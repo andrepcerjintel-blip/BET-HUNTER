@@ -19,6 +19,12 @@ pytest                        # testes (rede simulada, dados fictícios)
 ```
 Stack: Python + Flask + SQLite + HTML/JS puro. Sem API paga, sem build, sem serviços.
 
+## Missão (fluxo principal)
+
+**▶ INICIAR MISSÃO** (meta, profundidade 0–3, modo RÁPIDO/COMPLETO): executa caças + **matriz de consultas** (grupos A jogos × B CTA × C financeiro × D afiliados; termos genéricos nunca vão sozinhos) e transforma o que encontra em novas buscas (domínio, nome da plataforma, ID de afiliado, código, hashtags, jogo, frase da bio) até a profundidade escolhida. Segue até: meta de confirmados, pool qualificado (meta × 2,5), consultas esgotadas ou **INTERROMPER**. Fonte que falha 3 vezes seguidas é pausada (registrado no LOG) e as demais continuam.
+RÁPIDO = texto/bio/URL/domínio/score. COMPLETO = também resolve redirecionamentos, coleta perfis e análise visual, **só dos candidatos promissores**. A meta mede o fluxo de análise: nada é confirmado automaticamente.
+**REVISÃO ULTRARRÁPIDA**: `C` confirma · `D` descarta · `S` próximo · `E` evidências · `X` expandir · `Ctrl+Z` desfaz. **EXPORTAR CONFIRMADOS** gera CSV/XLSX da missão (NUMERO, USERNAME, URL_PERFIL, URL_VIDEO, DESCRICAO_EVIDENCIA, TEXTO_EVIDENCIA, PLATAFORMA, DOMINIO, URL_EXTERNA, CODIGO_AFILIADO, DATA_COLETA, OBSERVACAO_ANALISTA) e o arquivo completo. BAIXA RELEVÂNCIA fica registrada e oculta da revisão principal.
+
 ## Fluxo de trabalho recomendado
 
 1. **CAÇAS** → *EXECUTAR HABILITADAS* (12 caças editáveis) e/ou **NOVA BUSCA** (livre, combinação de termos, lista de jogos, hashtags).
@@ -67,7 +73,7 @@ Stack: Python + Flask + SQLite + HTML/JS puro. Sem API paga, sem build, sem serv
 
 **As fontes automáticas dependem de rede aberta e podem ser bloqueadas, mudar de layout ou exigir captcha.** Quando isso ocorre o erro aparece em **LOG** e a ferramenta segue funcionando pelos fallbacks manuais.
 O sandbox de desenvolvimento **não tinha acesso** a TikTok/DuckDuckGo/Bing: os coletores foram testados contra HTML *simulado*, não contra os sites reais — valide-os na sua máquina antes de depender deles (o intervalo entre consultas é configurável). Não há burla de login/captcha; use dentro dos termos das plataformas e da lei aplicável.
-A análise é textual (legenda/bio/links/páginas de destino); **não há análise de imagem/vídeo**: para “gameplay”, “logomarca” e “saque demonstrado” o analista pode marcar tags na evidência manual.
+**Análise visual (opcional)**: quando há thumbnail, `VISUAL_ANALYSIS` usa a API multimodal (defina `ANTHROPIC_API_KEY`; modelo em `BETHUNTER_VISION_MODEL`) ou, se houver `tesseract` instalado, OCR leve. Sem nenhum dos dois o resultado é `não disponível` e o candidato segue normalmente; tags manuais (gameplay/logomarca/saque) aparecem como `manual`.
 
 ## Estrutura
 
@@ -79,12 +85,11 @@ bethunter/urltools.py      # parâmetros de afiliado, cadeia de redirecionamento
 bethunter/extract.py       # extração de sinais do texto
 bethunter/scoring.py       # score explicável + classificador de falso positivo
 bethunter/sources.py       # DuckDuckGo, Bing, TikTok, yt-dlp (opcional)
+bethunter/mission.py       # matriz de consultas, derivação iterativa, missão
+bethunter/visual.py        # VISUAL_ANALYSIS opcional (multimodal/OCR)
 bethunter/pipeline.py      # candidatos, evidências, dedupe, investigar, expandir, caças, importação, jobs
 bethunter/queries.py       # filtros, painel, clusters, métricas, missão
 bethunter/exporter.py      # CSV/XLSX/JSON e listas para copiar
 bethunter/web.py           # API Flask;  templates/ + static/ = interface
 demo/seed_demo.py          # dados fictícios     tests/  # testes
 ```
-
-## Roadmap (fases 2–3)
-Classificação assistida por IA, análise temporal, correlação avançada de redes, mais fontes/adaptadores (interface `sources.run_source` já isola cada fonte).

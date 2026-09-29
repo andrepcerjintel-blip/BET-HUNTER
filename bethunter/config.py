@@ -13,7 +13,7 @@ DEFAULT_SETTINGS = {
     "thresholds": {"alta": 70, "revisar": 45},
     "goal": 200,
     "cache_days": 7,
-    "auto_discard_low": True,      # BAIXA RELEVÂNCIA -> DESCARTADO (nunca apaga; só se o analista não mexeu)
+    "auto_discard_low": False,     # padrão: BAIXA RELEVÂNCIA fica como BAIXA RELEVÂNCIA (oculta da revisão, nunca apaga)
     "request_delay": 1.2,          # segundos entre consultas externas (educação com as fontes)
     "resolve_links": True,
     "max_links_per_candidate": 6,
@@ -70,6 +70,24 @@ DEFAULT_SETTINGS = {
         "google.com", "spotify.com", "kwai.com", "pinterest.com", "linkedin.com", "twitch.tv", "apple.com",
     ],
     "expand_sources": ["ddg", "bing", "tiktok"],
+    # ---- matriz de consultas (grupos A-D) e missão
+    "matrix": {
+        "A": ["Fortune Tiger", "Tigrinho", "Aviator", "Mines", "Spaceman", "Crash", "Plinko", "slots", "roleta"],
+        "B": ["link na bio", "cadastre-se", "crie sua conta", "acesse", "jogue", "entre agora", "faça seu cadastro"],
+        "C": ["saque", "PIX", "pagando", "pagamento", "bônus", "cashback", "giros grátis"],
+        "D": ["código", "cupom", "promocode", "indicação", "convite", "grupo VIP", "sinais"],
+    },
+    "matrix_pairs": ["AB", "AC", "BC", "AD", "BD"],
+    "generic_alone": ["bet", "bets", "aposta", "apostas", "apostar", "cassino", "casino", "cassino online", "slot",
+                      "slots", "roleta", "mines", "crash", "plinko"],
+    "mission_depth": 2,            # 0..3
+    "mission_mode": "rapido",      # rapido | completo
+    "mission_sources": ["ddg", "bing", "tiktok"],
+    "pool_factor": 2.5,            # a descoberta também para quando o pool qualificado chega a meta*fator
+    "derived_per_candidate": 6,
+    "derived_max": 400,
+    "source_fail_limit": 3,        # falhas seguidas -> fonte pausada na missão (registrado no log)
+    "visual_max_per_candidate": 3,
     "lexicons": {},  # sobrescreve listas de LEXICONS por chave (avançado)
 }
 
@@ -151,8 +169,8 @@ AFFILIATE_TYPES = {"affiliate", "referral"}  # contam para "+20 link com parâme
 DEFAULT_HUNTS = [
     ("CAÇA 01 — Fortune Tiger / Tigrinho", "queries",
      ["Fortune Tiger", "tigrinho", "jogo do tigrinho", "fortune tiger link na bio", "tigrinho pagando"]),
-    ("CAÇA 02 — Aviator", "queries", ["Aviator", "aviator sinais", "aviator horário pagante", "aviator link na bio"]),
-    ("CAÇA 03 — Mines", "queries", ["Mines", "mines estratégia", "mines sinais", "mines link na bio"]),
+    ("CAÇA 02 — Aviator", "queries", ["Aviator cadastre-se", "aviator sinais", "aviator horário pagante", "aviator link na bio"]),
+    ("CAÇA 03 — Mines", "queries", ["Mines bônus", "mines estratégia", "mines sinais", "mines link na bio"]),
     ("CAÇA 04 — \"plataforma pagando\"", "queries",
      ["\"plataforma pagando\"", "plataforma pagando pix", "nova plataforma pagando"]),
     ("CAÇA 05 — \"link na bio\" + saque", "queries",
@@ -169,6 +187,7 @@ DEFAULT_HUNTS = [
     ("CAÇA 11 — links de afiliados", "affiliate_links",
      ["\"aff=\" plataforma", "\"ref=\" bônus cadastro", "affiliate cadastro bônus"]),
     ("CAÇA 12 — domínios encontrados anteriormente", "known_domains", []),
+    ("CAÇA 13 — matriz de consultas (jogos × CTA × financeiro × afiliados)", "matrix", []),
 ]
 DEFAULT_HUNT_SOURCES = ["ddg", "bing", "tiktok"]
 
