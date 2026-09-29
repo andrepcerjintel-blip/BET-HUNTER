@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CIBERLAB — TIKTOK BET HUNTER</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>CIBERLAB <span>—</span> TIKTOK BET HUNTER</h1>
+  <div class="actions">
+    <button class="primary" onclick="openSearch()">NOVA BUSCA</button>
+    <button class="primary" onclick="openInvestigate()">INVESTIGAR PERFIL</button>
+    <button onclick="openExpand()">EXPANDIR PERFIL</button>
+    <button onclick="openImport()">IMPORTAR LISTA</button>
+    <button onclick="openManual()">+ EVIDÊNCIA MANUAL</button>
+    <button class="review" onclick="startReview()">▶ MODO REVISÃO RÁPIDA</button>
+  </div>
+</header>
+
+<section id="panel"></section>
+
+<nav id="tabs">
+  <a data-v="results">RESULTADOS</a>
+  <a data-v="pending">PENDENTES DE VALIDAÇÃO <b id="pendCount"></b></a>
+  <a data-v="clusters">CLUSTERS</a>
+  <a data-v="hunts">CAÇAS</a>
+  <a data-v="mission">MODO MISSÃO</a>
+  <a data-v="metrics">MÉTRICAS</a>
+  <a data-v="log">LOG</a>
+  <a data-v="config">CONFIG</a>
+  <a data-v="export">EXPORTAR</a>
+</nav>
+
+<main id="view"></main>
+
+<div id="modalRoot"></div>
+<div id="jobPanel" class="hidden"></div>
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
