@@ -270,8 +270,8 @@ def test_zero_results_never_pauses_source_but_lowers_priority(monkeypatch):
         assert c.execute("SELECT COUNT(*) FROM search_log WHERE source='TIKTOK_SEARCH_LOCAL' AND found=0 AND errors=0").fetchone()[0] >= 10
 
 
-def test_real_failures_pause_after_limit_zero_in_between_resets(monkeypatch):
-    script = iter([502, 502, "zero", 502, 502, 502, 502])                                     # zero (válido) zera a contagem
+def test_real_failures_pause_source_temporarily_zero_in_between_resets(monkeypatch):
+    script = iter([502, 502, "zero", 502, 502, 502])                                         # o zero (válido) zera a contagem
     def fn(b, k):
         v = next(script, 502)
         return page([]) if v == "zero" else resp(v)
@@ -279,24 +279,23 @@ def test_real_failures_pause_after_limit_zero_in_between_resets(monkeypatch):
     cfg_mission(priority=[f"q{i}" for i in range(8)], matrix={"A": [], "B": [], "C": [], "D": []})
     j = pipeline.Job("m")
     r = mission.run_mission(j, 200, 0, "rapido", ["tiktok_local", "bing"])
-    assert r["fontes_pausadas"] == ["tiktok_local"]
-    calls_local = [s for s in seen if s[0] == "tiktok_local"]
-    assert len(calls_local) == 6                                                             # 2 falhas, 1 zero (reset), 3 falhas -> pausa
-    assert any("pausada" in l and "3 falhas seguidas" in l for l in j.lines)
+    assert "tiktok_local" in r["fontes_pausadas"] and r["stop_reason"] == "QUERY_QUEUE_EXHAUSTED"   # fonte pausa; a missão NÃO
+    assert [s for s in seen if s[0] == "tiktok_local"][:6] and any("pausada nesta missão" in l for l in j.lines)
+    assert [s[0] for s in seen if s[0] == "bing"] and len([s for s in seen if s[0] == "bing"]) == 8   # bing processou todas as consultas
 
 
-def test_rate_limit_reduces_pace_and_continues_with_other_sources(monkeypatch):
-    slept = []
-    monkeypatch.setattr(mission.time, "sleep", lambda s: slept.append(s))
+def test_rate_limit_pauses_only_the_source_requeues_and_continues(monkeypatch):
     seen = mission_env(monkeypatch, lambda b, k: resp(429), lambda s, q: ([{"username": "ok_bing", "profile_url": "https://www.tiktok.com/@ok_bing", "video_url": "",
                                                                              "text": "Fortune Tiger link na bio", "source": "Bing", "query": q, "source_url": "x"}], None, "x"))
     cfg_mission(priority=["a1", "a2", "a3", "a4"], matrix={"A": [], "B": [], "C": [], "D": []})
     j = pipeline.Job("m")
     r = mission.run_mission(j, 200, 0, "rapido", ["tiktok_local", "bing"])
-    assert any("rate limit — ritmo reduzido" in l for l in j.lines) and any(x >= 5 for x in slept)
-    assert r["fontes_pausadas"] == ["tiktok_local"]
+    assert r["stop_reason"] == "QUERY_QUEUE_EXHAUSTED"                                       # 429 nunca encerra a missão
+    assert "tiktok_local" in r["fontes_pausadas"] and any("rate limit" in l for l in j.lines)
+    assert len([s for s in seen if s[0] == "bing"]) == 4                                     # próxima fonte é usada em todas as consultas
     with db.connect() as c:
         assert c.execute("SELECT COUNT(*) FROM candidates WHERE username='ok_bing'").fetchone()[0] == 1
+        assert c.execute("SELECT COUNT(*) FROM mission_tasks WHERE status IN ('PENDING','RETRY','RUNNING')").fetchone()[0] == 0
 
 
 def test_at_user_queries_only_local_and_hashtag_seeds_respect_depth(monkeypatch):

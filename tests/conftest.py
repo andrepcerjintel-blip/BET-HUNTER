@@ -90,5 +90,6 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr("bethunter.visual.engine", lambda: None)
     monkeypatch.setitem(__import__("bethunter.visual", fromlist=["x"])._warned, "done", False)
     with db.connect() as c:
-        db.save_settings(c, {"request_delay": 0})
+        db.save_settings(c, {"request_delay": 0, "source_pause_seconds": 0.01, "rate_limit_cooldowns": [0.01],
+                              "query_retry_delays": [0, 0, 0]})
     return calls

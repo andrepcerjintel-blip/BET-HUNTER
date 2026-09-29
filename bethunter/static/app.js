@@ -262,14 +262,21 @@ async function reanalyze(id) { toast('Coletando…'); const r = await api(`/api/
 
 /* ------------------------------------------------------------ jobs */
 function missionPanel(j) {
-  const s = j.stats || {}; if (s.consultas_total === undefined) return '';
+  const s = j.stats || {}; if (s.queries_total === undefined && s.consultas_total === undefined) return '';
   const row = (k, v) => `<div>${k}</div><div><b>${esc(v)}</b></div>`;
-  return `<div style="font-weight:700;color:var(--warn)">${j.status === 'running' ? 'BUSCA EM EXECUÇÃO' : 'BUSCA ' + (j.cancelled ? 'INTERROMPIDA' : 'CONCLUÍDA')}</div>
-   <div class="mstat">${row('Consulta atual', s.consulta_atual || '—')}${row('Consultas', `${s.consultas_feitas} / ${s.consultas_total}`)}${row('Resultados brutos', s.brutos)}
-   ${row('Candidatos únicos', s.unicos)}${row('Alta probabilidade', s.alta)}${row('Em revisão', s.em_revisao)}${row('Confirmados', `${s.confirmados} / ${s.meta}`)}
-   ${row('Descartados', s.descartados)}${row('Clusters', s.clusters)}${row('Fontes ativas', (s.fontes_ativas || []).join(' > ') + ((s.fontes_pausadas || []).length ? ' · pausadas (falhas): ' + s.fontes_pausadas.join(', ') : '') + ((s.fontes_reduzidas || []).length ? ' · prioridade reduzida: ' + s.fontes_reduzidas.join(', ') : ''))}
-   ${Object.keys(s.fontes_estado || {}).length ? row('Estado das fontes', Object.entries(s.fontes_estado).map(([k, v]) => k + ': ' + v).join(' · ')) : ''}
-   ${s.motivo_fim ? row('Encerrada', s.motivo_fim) : ''}</div>`;
+  const ms = s.mission_status || (j.status === 'running' ? 'RUNNING' : '—');
+  const done = !!s.stop_reason;
+  const head = done ? `MISSÃO ${ms}` : (ms === 'DEGRADED' ? 'MISSÃO EM EXECUÇÃO (fonte(s) degradada(s)/pausada(s))' : 'MISSÃO EM EXECUÇÃO');
+  const fonts = Object.entries(s.fontes_situacao || {}).map(([k, v]) => `${k}: ${v}`).join(' · ') || (s.fontes_ativas || []).join(' > ');
+  return `<div style="font-weight:700;color:${done ? 'var(--ok)' : 'var(--warn)'}">${head}</div>
+   <div class="mstat">${row('Estado', ms)}${row('Meta', s.meta)}${row('Consulta atual', s.consulta_atual || '—')}
+   ${row('Consultas', `${s.queries_processed ?? s.consultas_feitas} / ${s.queries_total ?? s.consultas_total}`)}${row('Pendentes', s.queries_pending ?? '—')}
+   ${row('Em retry / vazias / falhas', `${s.queries_retry ?? 0} / ${s.queries_empty ?? 0} / ${s.queries_failed ?? 0}`)}
+   ${row('Resultados brutos', s.brutos)}${row('Candidatos únicos', s.unicos)}${row('Alta probabilidade', s.alta)}${row('Em revisão', s.em_revisao)}
+   ${row('Confirmados', `${s.confirmados} / ${s.meta}`)}${row('Descartados', s.descartados)}${row('Clusters', s.clusters)}
+   ${row('Fontes', fonts)}${(s.fontes_reduzidas || []).length ? row('Prioridade reduzida', s.fontes_reduzidas.join(', ')) : ''}
+   ${Object.keys(s.fontes_estado || {}).length ? row('Disponibilidade no início', Object.entries(s.fontes_estado).map(([k, v]) => k + ': ' + v).join(' · ')) : ''}
+   ${done ? row('Motivo de encerramento', `[${s.stop_reason}]`) : ''}</div>`;
 }
 async function trackJob(jobId, onDone) {
   const p = $('#jobPanel'); p.classList.remove('hidden');
@@ -286,17 +293,21 @@ async function trackJob(jobId, onDone) {
 }
 async function openMission() {
   const s = S.settings = await api('/api/settings'); await loadCState();
-  const m = modal(`<h2>INICIAR MISSÃO</h2><p class="mut">Busca continuamente (matriz de consultas + caças + expansão dos candidatos encontrados) até atingir a meta de confirmados, formar um pool de ≈ meta × ${s.pool_factor} candidatos qualificados, esgotar as consultas ou você interromper. A meta acompanha o fluxo de análise: <b>nada é confirmado automaticamente</b>.</p>
+  const cur = await api('/api/mission/current').catch(() => ({}));
+  const banner = cur && cur.orphan ? `<div class="box warn"><b>Missão #${cur.id} interrompida</b> — ${(cur.counters || {}).processed || 0}/${(cur.counters || {}).total || 0} consultas processadas, ${(cur.counters || {}).pending || 0} pendentes. A fila foi preservada. <button class="mission-btn" id="mResume">▶ RETOMAR MISSÃO</button></div>` : '';
+  const m = modal(`${banner}<h2>INICIAR MISSÃO</h2><p class="mut">Busca continuamente (matriz de consultas + caças + expansão dos candidatos encontrados) até atingir a meta de confirmados, processar TODAS as consultas planejadas (zero resultados, bloqueios e falhas de uma consulta ou fonte não encerram a missão), esgotar as fontes de vez ou você interromper. A meta acompanha o fluxo de análise: <b>nada é confirmado automaticamente</b>.</p>
    <div class="filters">META <input id="mGoal" type="number" value="${s.goal}" style="width:80px"> PROFUNDIDADE
      <select id="mDepth">${[0, 1, 2, 3].map(d => `<option ${d === s.mission_depth ? 'selected' : ''}>${d}</option>`).join('')}</select>
      MODO <select id="mMode"><option value="rapido" ${s.mission_mode === 'rapido' ? 'selected' : ''}>RÁPIDO (texto, bio, URL, domínio, score)</option><option value="completo" ${s.mission_mode === 'completo' ? 'selected' : ''}>COMPLETO (+ redirecionamentos, perfis, páginas, visual)</option></select></div>
    <div class="filters">${SOURCES.map(([k, n]) => srcCheck(k, n, 'mSrc', (s.mission_sources || []).includes(k))).join('')}</div>
    <div class="filters"><button class="sm" id="mCheck">verificar fontes agora</button><span class="mut">a missão executa primeiro as fontes em OK, na ordem: Search Local › Commercial › Bing › DuckDuckGo › TikTok</span></div><div id="mEnv"></div>
    <button class="mission-btn" id="mGo">▶ INICIAR</button>`, 'sm');
+  const rb = $('#mResume', m);
+  if (rb) rb.onclick = async () => { try { const r = await api('/api/mission/resume', {json: {}}); m.remove(); trackJob(r.job, j => j.result && toast(`Missão encerrada: [${j.result.stop_reason}]`, 10000)); } catch (e) { toast('⚠ ' + e.message, 6000); } };
   $('#mCheck', m).onclick = async () => { $('#mEnv', m).innerHTML = '<span class="mut">testando…</span>'; try { $('#mEnv', m).innerHTML = envHtml(await api('/api/env/test', {method: 'POST', json: {}})); } catch (e) { $('#mEnv', m).textContent = '⚠ ' + e.message; } };
   $('#mGo', m).onclick = async () => {
     const r = await api('/api/mission/start', {json: {goal: +$('#mGoal', m).value, depth: +$('#mDepth', m).value, mode: $('#mMode', m).value, sources: [...m.querySelectorAll('.mSrc:checked')].map(c => c.value)}});
-    m.remove(); trackJob(r.job, j => j.result && toast(`Missão encerrada: ${j.result.motivo}`, 10000));
+    m.remove(); trackJob(r.job, j => j.result && toast(`Missão encerrada: [${j.result.stop_reason}] ${j.result.motivo}`, 10000));
   };
 }
 function openExportConfirmed() {

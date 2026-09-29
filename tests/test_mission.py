@@ -82,16 +82,16 @@ def test_default_hunts_have_no_bare_generic_terms():
 # ---------------------------------------------------------------- missão
 def test_mission_generates_volume_with_progress_and_depth(env, monkeypatch):
     monkeypatch.setattr(sources, "run_source", gen_source())
-    only_matrix()
+    only_matrix(extra={"mission_pool_limit": 500})                    # limite GLOBAL explícito (o padrão é desligado)
     j = job()
     r = mission.run_mission(j, goal=200, depth=2, mode="rapido", sources_list=["ddg"])
-    assert r["motivo"].startswith("pool qualificado suficiente") and r["unicos"] >= 500   # não parou em 20/50: seguiu até 500
+    assert r["stop_reason"] == "GLOBAL_LIMIT" and r["unicos"] >= 500                 # segue até o limite configurado, não para em 20/50
     base = len(mission.generate_queries(cfg()))
     assert r["consultas"] > base                                      # consultas derivadas foram executadas
     assert r["brutos"] == 6 * r["consultas"]
     st = j.stats
     for k in ("consulta_atual", "consultas_feitas", "consultas_total", "brutos", "unicos", "alta", "confirmados", "meta",
-              "descartados", "clusters"):
+              "descartados", "clusters", "queries_pending", "queries_total", "queries_failed", "mission_status"):
         assert k in st
     assert st["alta"] > 0 and st["clusters"] > 0 and st["meta"] == 200
     with db.connect() as c:
@@ -121,13 +121,18 @@ def test_mission_stops_when_goal_reached_by_analyst(env, monkeypatch):
     assert r["motivo"] == "meta de confirmados atingida" and r["consultas"] == 0
 
 
-def test_mission_stops_on_pool_and_interrupt(env, monkeypatch):
+def test_mission_pool_is_not_a_default_stop_and_interrupt(env, monkeypatch):
     monkeypatch.setattr(sources, "run_source", gen_source())
     only_matrix()
-    r = mission.run_mission(job(), goal=10, depth=2, mode="rapido", sources_list=["ddg"])
-    assert r["motivo"].startswith("pool qualificado")
+    r = mission.run_mission(job(), goal=10, depth=0, mode="rapido", sources_list=["ddg"])
+    assert r["stop_reason"] == "QUERY_QUEUE_EXHAUSTED" and r["consultas"] == len(mission.generate_queries(cfg()))   # sem parada por "pool"
+    only_matrix(extra={"mission_pool_limit": 25})
+    with db.connect() as c:
+        c.execute("DELETE FROM missions")
+    r = mission.run_mission(job(), goal=10, depth=0, mode="rapido", sources_list=["ddg"])
+    assert r["stop_reason"] == "GLOBAL_LIMIT"                          # só com limite global configurado explicitamente
     j = job(); j.cancelled = True
-    assert mission.run_mission(j, 200, 2, "rapido", ["ddg"])["motivo"] == "interrompida pelo usuário"
+    assert mission.run_mission(j, 200, 2, "rapido", ["ddg"])["stop_reason"] == "USER_CANCELLED"
 
 
 def test_mission_pauses_blocked_source_and_continues_with_others(env, monkeypatch):

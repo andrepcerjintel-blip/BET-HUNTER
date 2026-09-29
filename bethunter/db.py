@@ -72,6 +72,19 @@ CREATE TABLE IF NOT EXISTS search_log(
   error_msg TEXT DEFAULT '', duration_ms INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS missions(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  params TEXT DEFAULT '{}', status TEXT DEFAULT 'PENDING', stop_reason TEXT DEFAULT '',
+  started_at TEXT, ended_at TEXT, updated_at TEXT, counters TEXT DEFAULT '{}', sources TEXT DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS mission_tasks(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mission_id INTEGER NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
+  seq INTEGER, q TEXT, origin TEXT, only_src TEXT DEFAULT '', tier INTEGER DEFAULT 1, dp INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'PENDING', todo TEXT DEFAULT NULL, done TEXT DEFAULT '{}', attempts TEXT DEFAULT '{}',
+  wait TEXT DEFAULT '{}', raw INTEGER DEFAULT 0, new INTEGER DEFAULT 0, note TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS ix_mt ON mission_tasks(mission_id, status);
 CREATE TABLE IF NOT EXISTS visuals(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
@@ -145,7 +158,8 @@ def get_settings(conn):
         try:
             config.deep_merge(s, json.loads(row["value"]))
         except ValueError:
-            pass
+            import logging
+            logging.getLogger("bethunter").warning("configurações do usuário corrompidas: usando os padrões")
     return s
 
 

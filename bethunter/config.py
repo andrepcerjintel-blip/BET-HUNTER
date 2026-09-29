@@ -98,7 +98,15 @@ DEFAULT_SETTINGS = {
     "tiktok_search_limit": 20,               # resultados por página
     "tiktok_search_sort": "0",               # 0 relevância | 1 mais curtidos
     "tiktok_search_timeout": 40,
-    "pool_factor": 2.5,            # a descoberta também para quando o pool qualificado chega a meta*fator
+    "mission_pool_limit": 0,       # limite GLOBAL opcional (0 = desligado): para a missão ao atingir N candidatos p/ revisão+confirmados
+    "mission_max_minutes": 0,      # limite GLOBAL opcional de tempo (0 = desligado) -> GLOBAL_TIMEOUT
+    "mission_skip_recent_hours": 0,  # >0: pula consultas já feitas nas últimas N horas (padrão desligado: nunca pula em silêncio)
+    "query_max_attempts": 3,       # tentativas por consulta+fonte em falha transitória
+    "query_retry_delays": [2, 5, 15],   # backoff (s) entre tentativas, com jitter
+    "rate_limit_cooldowns": [30, 60, 120, 300],   # pausa da FONTE após 429 (respeita Retry-After se maior)
+    "source_pause_seconds": 30,    # pausa da fonte após falhas técnicas seguidas (dobra a cada pausa)
+    "source_max_pauses": 4,        # pausas seguidas sem nenhum sucesso -> fonte indisponível de vez
+    "mission_watchdog_restarts": 3,
     "derived_per_candidate": 6,
     "derived_max": 400,
     "source_fail_limit": 3,        # falhas seguidas -> fonte pausada na missão (registrado no log)

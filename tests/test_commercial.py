@@ -433,11 +433,13 @@ def test_mission_pauses_failing_commercial_but_other_sources_continue(creds, mon
     mission_setup(["Fortune Tiger", "Aviator", "Mines", "Crash", "Plinko"])
     j = pipeline.Job("m")
     r = mission.run_mission(j, 200, 0, "rapido", ["ddg", "commercial"])
-    assert r["fontes_pausadas"] == ["commercial"] and any("pausada" in l and "TIKTOK_COMMERCIAL_CONTENT_API" in l for l in j.lines)
+    assert r["stop_reason"] == "QUERY_QUEUE_EXHAUSTED" and r["status"] == "COMPLETED"          # falha de fonte NÃO encerra a missão
+    assert "commercial" in r["fontes_pausadas"] and any("pausada" in l and "TIKTOK_COMMERCIAL_CONTENT_API" in l for l in j.lines)
     with db.connect() as c:
         assert c.execute("SELECT COUNT(*) FROM candidates WHERE username LIKE 'org_%'").fetchone()[0] > 0   # ddg não foi afetado
         errs = c.execute("SELECT COUNT(*) FROM search_log WHERE source='TIKTOK_COMMERCIAL_CONTENT_API' AND errors=1").fetchone()[0]
-        assert errs == 3                                                                     # parou após 3 falhas seguidas (sem insistir)
+        assert errs >= 3                                                                     # falhas reais registradas, sem insistir para sempre
+        assert c.execute("SELECT COUNT(*) FROM mission_tasks WHERE status='PENDING' OR status='RETRY'").fetchone()[0] == 0
 
 
 def test_mission_without_commercial_selected_never_calls_it(creds, monkeypatch):

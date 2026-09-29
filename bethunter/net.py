@@ -167,7 +167,8 @@ def fetch_bytes(url, max_bytes=800_000, timeout=None):
             if len(raw) > max_bytes or time.time() - t0 > timeout * 2:
                 return None
         return raw
-    except requests.RequestException:
+    except requests.RequestException as e:
+        log.warning("download interrompido: %s | %s", url, e)
         return None
     finally:
         r.close()

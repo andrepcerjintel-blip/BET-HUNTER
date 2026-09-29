@@ -2,6 +2,7 @@
 erro registrado e o restante da ferramenta segue funcionando (importação manual, evidência manual...)."""
 import importlib.util
 import json
+import logging
 import re
 import shutil
 import subprocess
@@ -13,9 +14,11 @@ from bs4 import BeautifulSoup
 from . import net
 from .util import (canonical_video_url, clip, extract_hashtags, extract_mentions, parse_tiktok_url, profile_url)
 
+log = logging.getLogger("bethunter")
 SOURCE_LABELS = {"ddg": "DuckDuckGo", "bing": "Bing", "tiktok": "TikTok Search", "tiktok_tag": "TikTok Hashtag",
                  "commercial": "TIKTOK_COMMERCIAL_CONTENT_API", "tiktok_local": "TIKTOK_SEARCH_LOCAL"}
 SEARCH_SOURCES = ["tiktok_local", "ddg", "bing", "tiktok"]
+RETRY_AFTER = {}    # rótulo da fonte -> segundos pedidos pelo servidor em HTTP 429 (a missão respeita ao pausar a fonte)
 # Prioridade de execução (menor = primeiro). tiktok_playwright: reservado, não implementado.
 SOURCE_PRIORITY = ["tiktok_local", "commercial", "tiktok_playwright", "bing", "ddg", "tiktok", "tiktok_tag"]
 
@@ -257,7 +260,8 @@ def ytdlp_videos(username, n=12):
         p = subprocess.run([*cmd, "-J", "--flat-playlist", "--playlist-end", str(n), profile_url(username)],
                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         data = json.loads(p.stdout or "{}")
-    except (subprocess.SubprocessError, ValueError, OSError):
+    except (subprocess.SubprocessError, ValueError, OSError) as e:
+        log.warning("yt-dlp falhou para @%s: %s", username, e)
         return []
     out = []
     for e in data.get("entries") or []:

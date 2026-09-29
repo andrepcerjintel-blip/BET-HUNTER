@@ -163,6 +163,9 @@ def search(q, settings=None, stop=None):
             return fail(None, ("OFFLINE: " if "conexão" in r["error"] else "") + r["error"])
         if st == 429:
             if rl >= 1:
+                if r["retry_after"]:
+                    from . import sources
+                    sources.RETRY_AFTER[sources.SOURCE_LABELS["tiktok_local"]] = r["retry_after"]
                 return fail(st, "RATE LIMITED")
             rl += 1
             time.sleep(min(r["retry_after"] or 5.0, 30.0))

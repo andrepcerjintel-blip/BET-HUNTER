@@ -207,6 +207,9 @@ def search(q, settings=None, stop=None):
             return fail(st, "SEM PERMISSÃO PARA O ENDPOINT")
         if st == 429:                      # retry conservador: 1 nova tentativa, espera limitada
             if rl >= 1:
+                if r["retry_after"]:
+                    from . import sources
+                    sources.RETRY_AFTER[sources.SOURCE_LABELS["commercial"]] = r["retry_after"]
                 return fail(st, "RATE LIMITED")
             rl += 1
             time.sleep(min(r["retry_after"] or 5.0, 30.0))

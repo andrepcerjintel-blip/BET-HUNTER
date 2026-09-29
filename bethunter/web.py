@@ -252,8 +252,42 @@ def create_app(db_path=None):
             s = db.save_settings(c, {"goal": goal, "mission_depth": depth, "mission_mode": mode,
                                      "mission_sources": b.get("sources") or db.get_settings(c)["mission_sources"]})
         job = pipeline.start_job(f"MISSÃO meta {goal} · profundidade {depth} · {mode.upper()}",
-                                 lambda j: mission.run_mission(j, goal, depth, mode, s["mission_sources"], precheck=True))
+                                 lambda j: mission.run_supervised(j, goal, depth, mode, s["mission_sources"], precheck=True))
         return jsonify({"ok": True, "job": job.id})
+
+    def _resume(mid):
+        with db.connect() as c:
+            m = mission.current(c) if not mid else None
+            row = c.execute("SELECT * FROM missions WHERE id=?", (mid or (m or {}).get("id"),)).fetchone()
+        if not row or row["status"] not in mission.M_OPEN:
+            return None
+        if any(getattr(j, "mission_id", None) == row["id"] and j.status == "running" for j in pipeline.JOBS.values()):
+            return None                                  # já há worker vivo
+        p = json.loads(row["params"] or "{}")
+        job = pipeline.start_job(f"MISSÃO #{row['id']} RETOMADA", lambda j: mission.run_supervised(
+            j, p.get("goal", 200), p.get("depth", 2), p.get("mode", "rapido"), p.get("sources", []), precheck=False,
+            mission_id=row["id"]))
+        job.mission_id = row["id"]
+        return job
+
+    @app.post("/api/mission/resume")
+    def api_mission_resume():
+        job = _resume(body().get("id"))
+        if not job:
+            return jsonify({"ok": False, "error": "nenhuma missão aberta sem worker para retomar"}), 409
+        return jsonify({"ok": True, "job": job.id})
+
+    @app.get("/api/mission/current")
+    def api_mission_current():
+        """Estado da última missão. WATCHDOG: missão aberta (pending>0), iniciada NESTE processo, sem worker vivo -> reinicia."""
+        with db.connect() as c:
+            m = mission.current(c)
+        if m and m["status"] in mission.M_OPEN and not m["alive"] and m["counters"].get("open", 0) > 0 and m["id"] in mission.STARTED_HERE:
+            job = _resume(m["id"])
+            if job:
+                m["watchdog_restarted"] = job.id
+                m["alive"], m["orphan"] = True, False
+        return jsonify(m or {})
 
     @app.post("/api/jobs/<jid>/cancel")
     def api_job_cancel(jid):

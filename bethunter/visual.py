@@ -3,6 +3,7 @@ saque, PIX, logomarca, QR, código). Motores, em ordem: API multimodal (se ANTHR
 Sem motor => 'não disponível' e o candidato segue normalmente."""
 import base64
 import json
+import logging
 import os
 import re
 import shutil
@@ -13,6 +14,7 @@ import requests
 from . import db, extract, net, sources
 from .util import norm, now_iso
 
+log = logging.getLogger("bethunter")
 KEYS = ["slot_ui", "roulette", "aviator", "mines", "tigrinho", "balance", "money_value", "bet_button", "withdraw",
         "pix", "platform_logo", "qr_code", "promo_code"]
 GAME_KEYS = ("slot_ui", "roulette", "aviator", "mines", "tigrinho")
@@ -152,6 +154,7 @@ def run_visual(cid, settings, max_n=None):
             turl, img = fetch_thumb(v)
             res = analyze_image(img) if img else None
         except Exception:
+            log.exception("análise visual falhou para %s", v)
             res = None
         if not res:
             continue

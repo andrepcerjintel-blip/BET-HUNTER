@@ -421,8 +421,15 @@ def ingest_hits(conn, hits, settings, *, hunt="", origin=None, resolved=None):
         if mine:
             save_links(conn, cid, mine, "snippet", settings)
         stats["ids"].add(cid)
+    # análise de cada candidato SEM cascata; depois UM recálculo de bônus em lote (candidatos + vizinhos de domínio),
+    # em vez de reavaliar todos os vizinhos a cada candidato novo (O(n²) quando centenas compartilham o mesmo domínio)
     for cid in stats["ids"]:
-        refresh_candidate(conn, cid, settings)
+        refresh_candidate(conn, cid, settings, cascade=False)
+    batch = set(stats["ids"])
+    for cid in stats["ids"]:
+        batch.update(_peer_ids(conn, cid))
+    for cid in batch:
+        apply_bonus(conn, cid, settings)
     return stats
 
 
@@ -927,7 +934,7 @@ class Job:
         self.label, self.status, self.total, self.done = label, "running", 0, 0
         self.lines, self.result, self.error = [], None, None
         self.started = time.time()
-        self.cancelled, self.stats = False, {}
+        self.cancelled, self.stats, self.mission_id = False, {}, None
 
     def log(self, msg):
         self.lines.append(msg)
