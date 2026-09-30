@@ -1,0 +1,10 @@
+__pycache__/
+.pytest_cache/
+output/.chrome_profile/
+output/screenshots/*.png
+output/evidence/*/
+output/index_perfis.csv
+output/takedown.csv
+output/clusters.*
+output/classificacao.csv
+output/relatorio_missao.*

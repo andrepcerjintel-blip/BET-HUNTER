@@ -1,0 +1,5 @@
+{
+  "perfil_demo_a": {"display_name": "Demo A", "followers": "12.3K", "bio": "Nova plataforma pagando! cadastre-se no link na bio", "bio_links": ["https://exemplo-bet.invalid/register?inviter=DEMO123"], "content": ["CPA chinês voltou, entra pelo meu link"]},
+  "perfil_demo_b": {"display_name": "Demo B", "followers": "-", "bio": "Reportagem sobre apostas e golpes. Não recomendo.", "content": []},
+  "perfil_demo_c": {"status": "INDISPONIVEL"}
+}

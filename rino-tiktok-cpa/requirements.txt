@@ -1,0 +1,5 @@
+requests>=2.31
+beautifulsoup4>=4.12
+playwright>=1.44   # usa o Google Chrome local (channel="chrome"); NÃO rode "playwright install"
+pytest>=8          # apenas para os testes
+# pandas não é necessário: CSV via biblioteca padrão

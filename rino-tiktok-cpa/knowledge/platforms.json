@@ -1,0 +1,7 @@
+{
+  "_nota": "Lista EDITÁVEL. Só entram plataformas/domínios verificados por um analista. Domínio ausente aqui não é 'inocente': a classificação também usa palavras-chave de domínio, o conteúdo da landing page e domínios aprendidos do golden set.",
+  "platforms": [
+    {"name": "DIDI", "domains": ["di-di.me"], "fonte": "exemplo fornecido pelo solicitante"}
+  ],
+  "gambling_domain_keywords": ["bet", "casino", "cassino", "slots", "tigrinho", "jackpot"]
+}
